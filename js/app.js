@@ -8,19 +8,18 @@ import { offSearch, offBarcode, startScanner, readLabel } from './lookup.js';
 
 // ---------- constants ----------
 const MEALS = [
-  { id: 'breakfast', name: 'Breakfast', icon: '🍳', time: '08:00' },
-  { id: 'lunch', name: 'Lunch', icon: '🥗', time: '12:30' },
-  { id: 'dinner', name: 'Dinner', icon: '🍝', time: '18:30' },
-  { id: 'snack', name: 'Snacks', icon: '🍎', time: '15:30' },
+  { id: 'breakfast', name: 'Breakfast', time: '08:00' },
+  { id: 'lunch', name: 'Lunch', time: '12:30' },
+  { id: 'dinner', name: 'Dinner', time: '18:30' },
+  { id: 'snack', name: 'Snacks', time: '15:30' },
 ];
 const mealById = id => MEALS.find(m => m.id === id) || MEALS[3];
 const TAGS = ['Dairy', 'Gluten', 'Spicy', 'Fried / greasy', 'Caffeine', 'Artificial sweetener', 'Sugar alcohol',
   'Beans / legumes', 'High fiber', 'Red meat', 'Carbonated', 'Protein powder', 'Onion / garlic', 'Acidic'];
 const SYMPTOMS = ['Bloating', 'Cramps', 'Nausea', 'Gas', 'Heartburn', 'Diarrhea', 'Constipation', 'Sharp pain', 'Urgency'];
-const CONTEXT = ['Stressed', 'On my period', 'Hard practice', 'Game day', 'Traveling', 'Bad sleep', 'Ate fast'];
+const CONTEXT = ['Stressed', 'Period', 'Hard workout', 'Competition', 'Traveling', 'Poor sleep', 'Ate quickly'];
 const SEVERITY = [
-  { v: 1, e: '🙂', t: 'Barely' }, { v: 2, e: '😕', t: 'Mild' }, { v: 3, e: '😣', t: 'Moderate' },
-  { v: 4, e: '😖', t: 'Bad' }, { v: 5, e: '😫', t: 'Severe' }];
+  { v: 1, t: 'Very mild' }, { v: 2, t: 'Mild' }, { v: 3, t: 'Moderate' }, { v: 4, t: 'Bad' }, { v: 5, t: 'Severe' }];
 const DEFAULT_GOALS = { cal: 2400, p: 140, c: 300, f: 75, fiber: 30, water: 100 };
 
 const profile = () => db.get('settings', 'profile');
@@ -106,7 +105,15 @@ function confirmSheet(msg, yes = 'Delete', danger = true) {
   });
 }
 
-const thumb = (photo, fallback) => photo ? `<img class="thumb" src="${photo}" alt="">` : `<span class="thumb ph">${fallback}</span>`;
+const thumb = (photo, name) => photo ? `<img class="thumb" src="${photo}" alt="">` : `<span class="thumb ph">${esc((name || '?').trim().charAt(0).toUpperCase())}</span>`;
+const IC = {
+  camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  barcode: '<path d="M4 5v14M7 5v14M11 5v14M14 5v14M18 5v14M20 5v14"/>',
+  search: '<circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/>',
+  bolt: '<path d="M13 3 5 14h6l-1 7 8-11h-6z"/>',
+  calendar: '<rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/>',
+};
+const icon = n => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${IC[n]}</svg>`;
 const macroLine = m => `<span class="mp">${fmt(m.p)}P</span> <span class="mc">${fmt(m.c)}C</span> <span class="mf">${fmt(m.f)}F</span>`;
 
 function ring(val, goal) {
@@ -151,6 +158,7 @@ function entryTags(e) {
   return [];
 }
 
+const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 function fmtIn(v) { return v == null || v === '' ? '' : String(Math.round(v * 10) / 10); }
 
 // ---------- rendering ----------
@@ -182,11 +190,10 @@ function screenToday() {
   const left = g.cal - t.cal;
   return `
   <header class="top today-top">
-    <div class="hello">${greeting()}, ${esc(firstName())} 💜</div>
+    <div class="hello">${greeting()}, ${esc(firstName())}</div>
     <div class="datenav">
       <button class="dn-btn" data-act="day" data-n="-1" aria-label="Previous day">‹</button>
-      <label class="datebtn">${fmtDay(d)}${d !== dateStr() ? '' : `<span class="date-sub">${parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>`}
-        <input type="date" value="${d}" data-change="pickDate" aria-label="Pick a date"></label>
+      <button class="datebtn" data-act="calendar" aria-label="Open calendar">${fmtDay(d)}<span class="date-sub">${icon('calendar')}${d === dateStr() ? parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Calendar'}</span></button>
       <button class="dn-btn" data-act="day" data-n="1" aria-label="Next day">›</button>
     </div>
     ${d !== dateStr() ? `<button class="pill-btn" data-act="today">Back to today</button>` : ''}
@@ -214,7 +221,7 @@ function mealCard(m, ents, date) {
   const tot = sumMacros(ents.map(e => e.macros));
   const yest = !ents.length && db.list('entries').some(e => e.date === addDays(date, -1) && e.meal === m.id);
   return `<section class="card meal">
-    <div class="meal-head"><div class="meal-title"><span class="meal-ico">${m.icon}</span>${m.name}</div>${ents.length ? `<div class="meal-cal">${fmt(tot.cal)} cal</div>` : ''}</div>
+    <div class="meal-head"><div class="meal-title">${m.name}</div>${ents.length ? `<div class="meal-cal">${fmt(tot.cal)} cal</div>` : ''}</div>
     ${ents.map(e => `<button class="entry" data-act="editEntry" data-id="${e.id}">
         <div class="e-main"><div class="e-name">${esc(e.name)}</div>
         <div class="e-sub">${e.grams ? fmt(e.grams) + ' g · ' : ''}${macroLine(e.macros)}</div></div>
@@ -228,7 +235,7 @@ function mealCard(m, ents, date) {
 function waterCard(day, g) {
   const w = day.water || 0, pct = Math.min(100, w / (g.water || 1) * 100);
   return `<section class="card water">
-    <div class="card-head"><h3>💧 Water</h3><span class="muted"><b class="tx">${fmt(w)}</b> / ${fmt(g.water)} oz</span></div>
+    <div class="card-head"><h3>Water</h3><span class="muted"><b class="tx">${fmt(w)}</b> / ${fmt(g.water)} oz</span></div>
     <div class="w-track"><i style="width:${pct}%"></i></div>
     <div class="w-btns"><button data-act="water" data-oz="-8" aria-label="Remove 8 oz">−</button>
       <button data-act="water" data-oz="8">+8</button><button data-act="water" data-oz="16">+16</button><button data-act="water" data-oz="32">+32</button></div>
@@ -237,31 +244,31 @@ function waterCard(day, g) {
 
 function bodyCard(d) {
   const items = [
-    ['😴', 'Sleep', d.sleepMin != null ? fmtSleep(d.sleepMin) : null],
-    ['💚', 'Recovery', d.recovery != null ? d.recovery + '%' : null],
-    ['⚡', 'Strain', d.strain != null ? d.strain : null],
-    ['🔥', 'Burned', d.burned != null ? fmt(d.burned) : null],
-    ['💓', 'HRV', d.hrv != null ? d.hrv + ' ms' : null],
-    ['👟', 'Steps', d.steps != null ? fmt(d.steps) : null],
-    ['⚖️', 'Weight', d.weight != null ? d.weight + ' lb' : null],
-    ['🔋', 'Energy', d.energy ? d.energy + '/5' : null],
-  ].filter(i => i[2] != null);
+    ['Sleep', d.sleepMin != null ? fmtSleep(d.sleepMin) : null],
+    ['Recovery', d.recovery != null ? d.recovery + '%' : null],
+    ['Strain', d.strain != null ? d.strain : null],
+    ['Burned', d.burned != null ? fmt(d.burned) : null],
+    ['HRV', d.hrv != null ? d.hrv + ' ms' : null],
+    ['Steps', d.steps != null ? fmt(d.steps) : null],
+    ['Weight', d.weight != null ? d.weight + ' lb' : null],
+    ['Energy', d.energy ? d.energy + '/5' : null],
+  ].filter(i => i[1] != null);
   return `<section class="card tap" data-act="body">
     <div class="card-head"><h3>Recovery & sleep</h3><span class="link">${items.length ? 'Edit' : 'Log'}</span></div>
-    ${items.length ? `<div class="stat-grid">${items.map(i => `<div class="stat"><span class="stat-ico">${i[0]}</span><div><div class="stat-v">${esc(i[2])}</div><div class="stat-l">${i[1]}</div></div></div>`).join('')}</div>
+    ${items.length ? `<div class="stat-grid">${items.map(i => `<div class="stat"><div class="stat-v">${esc(i[1])}</div><div class="stat-l">${i[0]}</div></div>`).join('')}</div>
       ${d.notes ? `<p class="note">“${esc(d.notes)}”</p>` : ''}`
-    : `<p class="muted small">Add last night's sleep, your Whoop recovery & strain, calories burned, steps — and a quick journal note.</p>`}
+    : `<p class="muted small">Sleep, recovery and strain from your wearable, calories burned, steps, and notes.</p>`}
   </section>`;
 }
 
 function gutCard(date) {
   const eps = db.list('stomach').filter(e => e.date === date).sort((a, b) => a.time.localeCompare(b.time));
   return `<section class="card gut">
-    <div class="card-head"><h3>Gut check</h3>${eps.length ? `<span class="muted small">${eps.length} logged</span>` : ''}</div>
+    <div class="card-head"><h3>Digestion</h3>${eps.length ? `<span class="muted small">${eps.length} logged</span>` : ''}</div>
     ${eps.map(e => { const s = SEVERITY[e.severity - 1] || SEVERITY[2]; return `<button class="entry" data-act="editGut" data-id="${e.id}">
-      <div class="e-main"><div class="e-name">${s.e} ${s.t} · ${fmtTime(e.time)}</div><div class="e-sub">${esc((e.symptoms || []).join(', ') || 'No symptoms picked')}</div></div><div class="chev">›</div></button>`; }).join('')}
-    <button class="gut-btn" data-act="gut">😖 My stomach hurts — log it</button>
-    ${!eps.length ? `<p class="muted small center">Log it when it happens. After a few, Trends will point out foods that might be the cause.</p>` : ''}
+      <div class="e-main"><div class="e-name">${s.t} (${e.severity}/5) · ${fmtTime(e.time)}</div><div class="e-sub">${esc((e.symptoms || []).join(', ') || 'No symptoms picked')}</div></div><div class="chev">›</div></button>`; }).join('')}
+    <button class="btn soft full" data-act="gut">Log stomach symptoms</button>
+    ${!eps.length ? `<p class="muted small center">Log symptoms when they happen. Over time, Trends flags foods that often come before them.</p>` : ''}
   </section>`;
 }
 
@@ -276,20 +283,20 @@ function sortedFoods(q = '') {
 }
 function foodListHTML() {
   const list = sortedFoods(ui.foodQ);
-  if (!db.list('foods').length) return `<div class="empty"><div class="empty-ico">🏷️</div><b>Save your go-to brands once</b>
-    <p>Snap the nutrition label (or scan the barcode) and Pulse remembers it forever. Then just type how many grams you weighed — the math is done for you.</p>
+  if (!db.list('foods').length) return `<div class="empty"><b>Save the foods you buy</b>
+    <p>Photograph the nutrition label or scan the barcode once. After that, enter the grams you weighed and the macros are calculated for you.</p>
     <button class="btn primary" data-act="newFood">＋ Add your first food</button></div>`;
   if (!list.length) return `<p class="muted center">No foods match “${esc(ui.foodQ)}”.</p>`;
-  return list.map(f => `<button class="row" data-act="food" data-id="${f.id}">${thumb(f.photo, '🥣')}
+  return list.map(f => `<button class="row" data-act="food" data-id="${f.id}">${thumb(f.photo, f.name)}
     <div class="row-main"><div class="row-name">${esc(f.name)}${f.fav ? ' <span class="star">★</span>' : ''}</div><div class="row-sub">${foodSub(f)}</div></div><span class="chev">›</span></button>`).join('');
 }
 function screenFoods() {
   return `${header('My Foods', `${db.list('foods').length} saved`)}
   <div class="pad">
     <div class="action-grid">
-      <button class="action" data-act="newFood"><span>📷</span>Snap label</button>
-      <button class="action" data-act="scan"><span>▦</span>Scan barcode</button>
-      <button class="action" data-act="online"><span>🔎</span>Search online</button>
+      <button class="action" data-act="newFood">${icon('camera')}Snap label</button>
+      <button class="action" data-act="scan">${icon('barcode')}Scan barcode</button>
+      <button class="action" data-act="online">${icon('search')}Search online</button>
     </div>
     <div class="search"><input type="search" placeholder="Search my foods" value="${esc(ui.foodQ)}" data-input="foodQ" autocomplete="off"></div>
     <div class="list" id="foodList">${foodListHTML()}</div>
@@ -300,14 +307,14 @@ function screenFoods() {
 function recipeListHTML() {
   const q = ui.recipeQ.trim().toLowerCase();
   const all = db.list('recipes');
-  if (!all.length) return `<div class="empty"><div class="empty-ico">🍲</div><b>Your recipe book</b>
+  if (!all.length) return `<div class="empty"><b>No recipes yet</b>
     <p>Build a recipe from your saved foods, weigh the finished dish, and log any amount of it in grams — macros calculated automatically.</p>
     <button class="btn primary" data-act="newRecipe">＋ New recipe</button></div>`;
   const list = all.filter(r => !q || r.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name));
   return list.map(r => {
     const info = recipeInfo(r, getFood);
     const per = info.servings ? scale(info.total, 1 / info.servings) : scale(info.per, 100);
-    return `<button class="row" data-act="recipe" data-id="${r.id}">${thumb(r.photo, '🍲')}
+    return `<button class="row" data-act="recipe" data-id="${r.id}">${thumb(r.photo, r.name)}
       <div class="row-main"><div class="row-name">${esc(r.name)}</div>
       <div class="row-sub">${fmt(per.cal)} cal ${info.servings ? '/ serving' : '/ 100 g'} · ${macroLine(per)}</div></div><span class="chev">›</span></button>`;
   }).join('') || `<p class="muted center">No recipes match.</p>`;
@@ -358,7 +365,7 @@ function screenTrends() {
   db.list('entries').forEach(e => { if (e.date >= dates[0] && e.kind !== 'quick') { const c = counts.get(e.name) || { n: 0, cal: 0 }; c.n++; c.cal += e.macros.cal; counts.set(e.name, c); } });
   const top = [...counts.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 5);
 
-  return `${header('Trends', `🔥 ${streak()}-day logging streak`)}
+  return `${header('Trends', streak() ? `Logged ${streak()} day${streak() === 1 ? '' : 's'} in a row` : '', `<button class="top-btn" data-act="calendar">${icon('calendar')} Calendar</button>`)}
   <div class="pad">
     <div class="seg range">${[7, 30, 90].map(r => `<button class="${ui.range === r ? 'on' : ''}" data-act="range" data-r="${r}">${r === 7 ? 'Week' : r === 30 ? 'Month' : '3 months'}</button>`).join('')}</div>
 
@@ -385,12 +392,12 @@ function screenTrends() {
     </section>
 
     <section class="card">
-      <div class="card-head"><h3>Fuel vs. burn</h3></div>
+      <div class="card-head"><h3>Intake vs. burned</h3></div>
       ${both.length ? `<div class="big-stats"><div><b>${fmt(avgIn)}</b><span>avg eaten</span></div><div><b>${fmt(avgOut)}</b><span>avg burned</span></div><div><b class="${avgIn - avgOut < -300 ? 'warn-t' : ''}">${avgIn - avgOut > 0 ? '+' : ''}${fmt(avgIn - avgOut)}</b><span>difference</span></div></div>
       ${lineChart({ series: [{ values: totals.map((t, i) => t && days[i].burned ? t.cal : null), color: 'var(--purple-3)' }, { values: days.map((d, i) => totals[i] && d.burned ? d.burned : null), color: 'var(--warn)' }], labels })}
       <div class="legend"><span><i class="dot" style="background:var(--purple-3)"></i>Eaten</span><span><i class="dot" style="background:var(--warn)"></i>Burned</span></div>
-      ${avgIn - avgOut < -300 ? `<p class="tip">You're averaging ${fmt(avgOut - avgIn)} cal under what you burn. Under-fueling can hurt recovery & performance — worth a chat with your dietitian.</p>` : ''}`
-      : `<p class="muted small">Log calories burned (from Whoop) on days you log food to compare them here.</p>`}
+      ${avgIn - avgOut < -300 ? `<p class="tip">You're averaging ${fmt(avgOut - avgIn)} cal under what you burn. Under-eating can affect recovery and performance.</p>` : ''}`
+      : `<p class="muted small">Log calories burned (from your wearable) on days you log food to compare them here.</p>`}
     </section>
 
     <section class="card">
@@ -424,7 +431,7 @@ function gutTrends(dates) {
   const sym = new Map();
   inRange.forEach(e => (e.symptoms || []).forEach(s => sym.set(s, (sym.get(s) || 0) + 1)));
   return `<section class="card gut-trends">
-    <div class="card-head"><h3>🔍 Stomach pattern finder</h3></div>
+    <div class="card-head"><h3>Digestion patterns</h3></div>
     <div class="big-stats"><div><b>${inRange.length}</b><span>episodes this range</span></div><div><b>${inRange.length ? (inRange.reduce((s, e) => s + e.severity, 0) / inRange.length).toFixed(1) : '–'}</b><span>avg severity /5</span></div></div>
     ${sym.size ? `<p class="small">Most common: ${[...sym.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(s => `<b>${esc(s[0])}</b> (${s[1]})`).join(', ')}</p>` : ''}
     ${a.episodes < 3 ? `<p class="muted small">Log at least 3 stomach episodes (and keep logging food) and this will start pointing out possible trigger foods.</p>` : `
@@ -432,10 +439,10 @@ function gutTrends(dates) {
         ${[4, 12, 24].map(w => `<button class="chip sm ${ui.gutWindow === w ? 'on' : ''}" data-act="gutWin" data-w="${w}">${w}h</button>`).join('')} before it hurt</div>
       <p class="muted small">Normally, ${pct(a.base)} of what you eat is followed by stomach trouble within ${ui.gutWindow}h.</p>
       ${a.foods.length ? `<h4>Possible triggers</h4>${a.foods.map(f => `<div class="suspect"><div><b>${esc(f.name)}</b><div class="muted tiny">Eaten ${f.eaten}× · trouble after ${f.hit} of them</div></div><span class="badge">${pct(f.rate)}</span></div>`).join('')}`
-        : `<p class="small">No clear trigger foods yet — keep logging! 👍</p>`}
+        : `<p class="small">No clear trigger foods yet.</p>`}
       ${a.tags.length ? `<h4>Possible trigger types</h4><div class="chips">${a.tags.map(t => `<span class="chip sm warnchip">${esc(t.name)} · ${pct(t.rate)}</span>`).join('')}</div>` : ''}
       ${a.safe.length ? `<h4>Seem safe for you</h4><div class="chips">${a.safe.map(s => `<span class="chip sm safechip">${esc(s.name)}</span>`).join('')}</div>` : ''}
-      <p class="muted tiny">Patterns, not proof. Tag foods (dairy, gluten…) to spot trigger types. Bring this to your athletic trainer or dietitian.</p>`}
+      <p class="muted tiny">These are patterns, not a diagnosis. Tag foods (dairy, gluten, etc.) to spot trigger types, and talk to a dietitian or doctor about anything persistent.</p>`}
     <button class="btn soft full" data-act="gutHistory">See all stomach logs</button>
   </section>`;
 }
@@ -457,7 +464,7 @@ function screenMe() {
     <section class="card">
       <h3>Daily goals</h3>
       <div class="grid2">${gi('cal', 'Calories', 'cal')}${gi('p', 'Protein', 'g')}${gi('c', 'Carbs', 'g')}${gi('f', 'Fat', 'g')}${gi('fiber', 'Fiber', 'g')}${gi('water', 'Water', 'oz')}</div>
-      <p class="muted tiny">Use the targets from your team dietitian. Changes save automatically.</p>
+      <p class="muted tiny">Use targets from your dietitian or coach. Changes save automatically.</p>
       <button class="btn soft full" data-act="calcMacros">Fill fat & carbs from my calories + protein</button>
     </section>
 
@@ -472,18 +479,15 @@ function screenMe() {
         <div class="btn-row"><button class="btn soft grow" data-act="syncNow">Sync now</button><button class="btn ghost grow" data-act="signOut">Sign out</button></div>`
       : `<p class="small muted">Your data lives on this phone. Download a backup now and then so you never lose it.</p>`}
       <div class="btn-col">
-        <button class="btn soft" data-act="backup">⬇︎ Download backup</button>
-        <label class="btn soft">⬆︎ Restore from backup<input type="file" accept=".json,application/json" hidden data-change="restore"></label>
-        <button class="btn soft" data-act="csvDays">📊 Export daily summary (spreadsheet)</button>
-        <button class="btn soft" data-act="csvFood">🧾 Export food log (spreadsheet)</button>
+        <button class="btn soft" data-act="backup">Download backup</button>
+        <label class="btn soft">Restore from backup<input type="file" accept=".json,application/json" hidden data-change="restore"></label>
+        <button class="btn soft" data-act="csvDays">Export daily summary (CSV)</button>
+        <button class="btn soft" data-act="csvFood">Export food log (CSV)</button>
       </div>
-      <p class="muted tiny">${db.list('foods').length} foods · ${db.list('recipes').length} recipes · ${new Set(db.list('entries').map(e => e.date)).size} days logged</p>
+      <p class="muted tiny">${plural(db.list('foods').length, 'food')} · ${plural(db.list('recipes').length, 'recipe')} · ${plural(new Set(db.list('entries').map(e => e.date)).size, 'day')} logged</p>
     </section>
 
-    ${!isStandalone() ? `<section class="card install"><h3>📲 Put Pulse on your home screen</h3>
-      <ol><li>Open this page in <b>Safari</b></li><li>Tap the <b>Share</b> button <span class="kbd">⬆︎</span></li><li>Scroll and tap <b>Add to Home Screen</b></li><li>Tap <b>Add</b> — it opens full-screen like a real app</li></ol></section>` : ''}
 
-    <p class="muted tiny center">Pulse v1.0 · Go Pilots 💜</p>
   </div>`;
 }
 
@@ -500,6 +504,7 @@ const acts = {
   gut: () => openGut({ date: ui.date }),
   editGut: d => openGut({ ep: db.get('stomach', d.id) }),
   gutHistory: () => openGutHistory(),
+  calendar: () => openCalendar(),
   newFood: () => openFoodForm({ onSaved: f => openFoodDetail(f.id) }),
   food: d => openFoodDetail(d.id),
   scan: () => scanFlow({ onFood: f => openFoodDetail(f.id) }),
@@ -607,10 +612,10 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
     title: mode === 'log' ? `Add to ${mealById(meal).name}` : 'Add ingredient', full: true,
     body: `<div class="search sticky"><input id="pq" type="search" placeholder="Search my foods${mode === 'log' ? ' & recipes' : ''}" autocomplete="off"></div>
       <div class="tool-row">
-        <button class="tool" data-x="new"><span>📷</span>New food</button>
-        <button class="tool" data-x="scan"><span>▦</span>Scan</button>
-        <button class="tool" data-x="online"><span>🔎</span>Online</button>
-        ${mode === 'log' ? `<button class="tool" data-x="quick"><span>⚡</span>Quick add</button>` : ''}
+        <button class="tool" data-x="new">${icon('camera')}New food</button>
+        <button class="tool" data-x="scan">${icon('barcode')}Scan</button>
+        <button class="tool" data-x="online">${icon('search')}Online</button>
+        ${mode === 'log' ? `<button class="tool" data-x="quick">${icon('bolt')}Quick add</button>` : ''}
       </div>
       <div class="seg" id="ptabs"></div>
       <div class="list" id="plist"></div>`,
@@ -632,9 +637,9 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
       rows = db.list('recipes').sort((a, b) => a.name.localeCompare(b.name)).map(r => ['recipe', r, 'Recipe']);
     }
     s.$('#plist').innerHTML = rows.length ? rows.map(([k, o, sub]) => `<button class="row" data-x="pick" data-k="${k}" data-id="${o.id}">
-        ${thumb(o.photo, k === 'recipe' ? '🍲' : '🥣')}<div class="row-main"><div class="row-name">${esc(o.name)}${o.fav ? ' <span class="star">★</span>' : ''}</div><div class="row-sub">${sub}</div></div><span class="row-plus">＋</span></button>`).join('')
+        ${thumb(o.photo, o.name)}<div class="row-main"><div class="row-name">${esc(o.name)}${o.fav ? ' <span class="star">★</span>' : ''}</div><div class="row-sub">${sub}</div></div><span class="row-plus">＋</span></button>`).join('')
       : `<div class="empty small"><p>${q ? `Nothing saved called “${esc(q)}”.` : tab === 'recipes' ? 'No recipes yet.' : 'No saved foods yet.'}</p>
-         <button class="btn primary" data-x="new">📷 Add it from the label</button>${q ? `<button class="btn soft" data-x="online">🔎 Search online for “${esc(q)}”</button>` : ''}</div>`;
+         <button class="btn primary" data-x="new">Add it from the label</button>${q ? `<button class="btn soft" data-x="online">Search online for “${esc(q)}”</button>` : ''}</div>`;
   }
   const picked = (kind, obj) => {
     if (mode === 'ingredient') { onPick(obj); s.close(); return; }
@@ -668,12 +673,12 @@ function openAmount({ item, entry = null, meal, date, onAdded }) {
   quick.push([100, '100 g']);
   const s = openSheet({
     title: entry ? 'Edit entry' : 'How much?',
-    body: `<div class="amt-food">${thumb(item.photo, item.kind === 'recipe' ? '🍲' : '🥣')}<div><div class="amt-name">${esc(item.name)}</div><div class="muted small">${esc(item.brand || '')}</div></div></div>
+    body: `<div class="amt-food">${thumb(item.photo, item.name)}<div><div class="amt-name">${esc(item.name)}</div><div class="muted small">${esc(item.brand || '')}</div></div></div>
       <div class="amt-input"><input id="amt" type="text" inputmode="decimal" value="${fmtIn(startG)}" autocomplete="off" aria-label="Amount">
         <div class="seg unit">${`<button data-x="unit" data-u="g" class="on">grams</button>`}${item.servingG ? `<button data-x="unit" data-u="s">servings</button>` : ''}</div></div>
       <div class="chips">${quick.map(([g, l]) => `<button class="chip sm" data-x="q" data-g="${g}">${l}</button>`).join('')}</div>
       <div class="amt-prev" id="prev"></div>
-      <div class="field"><label>Meal</label><div class="chips">${MEALS.map(m => `<button class="chip ${m.id === meal ? 'on' : ''}" data-x="meal" data-m="${m.id}">${m.icon} ${m.name}</button>`).join('')}</div></div>
+      <div class="field"><label>Meal</label><div class="chips">${MEALS.map(m => `<button class="chip ${m.id === meal ? 'on' : ''}" data-x="meal" data-m="${m.id}">${m.name}</button>`).join('')}</div></div>
       <div class="field"><label>Time eaten</label><input id="etime" type="time" value="${entry?.time || defaultTime(date, meal)}"></div>`,
     footer: `${entry ? `<button class="btn ghost danger-t" data-x="del">Delete</button>` : ''}<button class="btn primary grow" data-x="save" id="saveBtn"></button>`,
   });
@@ -718,7 +723,7 @@ function openQuick({ entry = null, meal = defaultMeal(), date = ui.date }) {
   let curMeal = entry?.meal || meal;
   const s = openSheet({
     title: entry ? 'Edit quick add' : 'Quick add',
-    body: `<p class="muted small">For when you just know the numbers (restaurant, team meal, etc).</p>
+    body: `<p class="muted small">For when you already know the numbers, like eating out.</p>
       <div class="field"><label>What was it?</label><input id="qn" value="${esc(entry?.name || '')}" placeholder="e.g. Team dinner"></div>
       <div class="grid2">
         <div class="field"><label>Calories</label><input id="qcal" inputmode="decimal" value="${fmtIn(m.cal)}"></div>
@@ -726,7 +731,7 @@ function openQuick({ entry = null, meal = defaultMeal(), date = ui.date }) {
         <div class="field"><label>Carbs (g)</label><input id="qc" inputmode="decimal" value="${fmtIn(m.c)}"></div>
         <div class="field"><label>Fat (g)</label><input id="qf" inputmode="decimal" value="${fmtIn(m.f)}"></div>
       </div>
-      <div class="field"><label>Meal</label><div class="chips">${MEALS.map(x => `<button class="chip ${x.id === curMeal ? 'on' : ''}" data-x="meal" data-m="${x.id}">${x.icon} ${x.name}</button>`).join('')}</div></div>`,
+      <div class="field"><label>Meal</label><div class="chips">${MEALS.map(x => `<button class="chip ${x.id === curMeal ? 'on' : ''}" data-x="meal" data-m="${x.id}">${x.name}</button>`).join('')}</div></div>`,
     footer: `${entry ? `<button class="btn ghost danger-t" data-x="del">Delete</button>` : ''}<button class="btn primary grow" data-x="save">${entry ? 'Save' : 'Add'}</button>`,
   });
   s.on('click', '[data-x="meal"]', el => { curMeal = el.dataset.m; s.$$('[data-x="meal"]').forEach(b => b.classList.toggle('on', b === el)); });
@@ -751,9 +756,9 @@ function openFoodForm({ food = null, prefill = {}, onSaved } = {}) {
   const s = openSheet({
     title: food ? 'Edit food' : 'New food', full: true, lock: true,
     body: `
-      <label class="photo-box ${f.photo ? 'has' : ''}" id="pbox">${f.photo ? `<img src="${f.photo}" alt="Label photo">` : `<span class="pb-ico">📷</span><b>Snap the nutrition label</b><span class="muted small">Saved with the food so you never retake it</span>`}
+      <label class="photo-box ${f.photo ? 'has' : ''}" id="pbox">${f.photo ? `<img src="${f.photo}" alt="Label photo">` : `<span class="pb-ico">${icon('camera')}</span><b>Photograph the nutrition label</b><span class="muted small">Saved with the food so you never retake it</span>`}
         <input type="file" accept="image/*" hidden id="photoIn"></label>
-      <button class="btn soft full" id="ocrBtn" data-x="ocr" ${photoFile || f.photo ? '' : 'hidden'}>✨ Fill in the numbers from the photo</button>
+      <button class="btn soft full" id="ocrBtn" data-x="ocr" ${photoFile || f.photo ? '' : 'hidden'}>Read the numbers from the photo</button>
       <div class="muted small center" id="ocrMsg"></div>
       <div class="field"><label for="ff-name">Name *</label><input id="ff-name" data-t="name" value="${esc(f.name)}" placeholder="e.g. Fage 0% Greek Yogurt" autocomplete="off"></div>
       <div class="field"><label for="ff-brand">Brand</label><input id="ff-brand" data-t="brand" value="${esc(f.brand || '')}" placeholder="optional" autocomplete="off"></div>
@@ -829,7 +834,7 @@ function openFoodForm({ food = null, prefill = {}, onSaved } = {}) {
     const todays = db.list('entries').filter(e => e.kind === 'food' && e.refId === f.id && e.date === dateStr());
     if (food && todays.length) db.putMany('entries', todays.map(e => ({ ...e, name: f.name, brand: f.brand, per, macros: scale(per, e.grams) })));
     s.close();
-    toast(food ? 'Saved' : 'Food saved 🎉');
+    toast(food ? 'Saved' : 'Food saved');
     onSaved?.(f);
   });
   hint();
@@ -917,7 +922,7 @@ function openOnline({ q = '', onSaved }) {
     s.$('#ores').innerHTML = `<p class="muted center">Searching…</p>`;
     try {
       results = await offSearch(term);
-      s.$('#ores').innerHTML = results.length ? results.map((r, i) => `<button class="row" data-x="r" data-i="${i}"><span class="thumb ph">🌐</span>
+      s.$('#ores').innerHTML = results.length ? results.map((r, i) => `<button class="row" data-x="r" data-i="${i}">${thumb(null, r.name)}
         <div class="row-main"><div class="row-name">${esc(r.name)}</div><div class="row-sub">${esc(r.brand)}${r.brand ? ' · ' : ''}${fmt(num(r.cal))} cal / ${fmt(num(r.servingG))} g</div></div><span class="row-plus">＋</span></button>`).join('')
         : `<p class="muted center">No results. Try fewer words, or snap the label instead.</p>`;
     } catch (e) {
@@ -934,7 +939,7 @@ function openRecipeForm({ recipe = null }) {
   const r = recipe ? JSON.parse(JSON.stringify(recipe)) : { id: uid(), name: '', ingredients: [], cookedG: '', servings: '', steps: '', notes: '', photo: '' };
   const s = openSheet({
     title: recipe ? 'Edit recipe' : 'New recipe', full: true, lock: true,
-    body: `<label class="photo-box small ${r.photo ? 'has' : ''}" id="rpb">${r.photo ? `<img src="${r.photo}" alt="">` : `<span class="pb-ico">📸</span><span class="muted small">Add a photo (optional)</span>`}<input type="file" accept="image/*" hidden id="rph"></label>
+    body: `<label class="photo-box small ${r.photo ? 'has' : ''}" id="rpb">${r.photo ? `<img src="${r.photo}" alt="">` : `<span class="pb-ico">${icon('camera')}</span><span class="muted small">Add a photo (optional)</span>`}<input type="file" accept="image/*" hidden id="rph"></label>
       <div class="field"><label>Recipe name *</label><input id="rn" value="${esc(r.name)}" placeholder="e.g. Overnight oats" autocomplete="off"></div>
       <h4 class="sec">Ingredients</h4>
       <div id="ings"></div>
@@ -1032,19 +1037,19 @@ function openBody(date) {
   const fld = (k, label, unit, ph = '') => `<div class="field"><label>${label}</label><div class="unit-in"><input data-k="${k}" inputmode="decimal" value="${d[k] ?? ''}" placeholder="${ph}"><span>${unit}</span></div></div>`;
   const s = openSheet({
     title: `Recovery · ${fmtDay(date)}`, full: true, lock: true,
-    body: `<h4 class="sec">😴 Sleep (last night)</h4>
+    body: `<h4 class="sec">Sleep (last night)</h4>
       <div class="grid2">
         <div class="field"><label>Hours</label><div class="unit-in"><input id="sh" inputmode="numeric" value="${d.sleepMin != null ? Math.floor(d.sleepMin / 60) : ''}" placeholder="7"><span>h</span></div></div>
         <div class="field"><label>Minutes</label><div class="unit-in"><input id="sm" inputmode="numeric" value="${d.sleepMin != null ? Math.round(d.sleepMin % 60) : ''}" placeholder="45"><span>m</span></div></div>
         ${fld('sleepPerf', 'Sleep performance', '%')}
       </div>
-      <h4 class="sec">⌚ Whoop</h4>
+      <h4 class="sec">Wearable <span class="muted">(Whoop, Oura, Apple Watch…)</span></h4>
       <div class="grid2">${fld('recovery', 'Recovery', '%')}${fld('strain', 'Strain', '/21')}${fld('burned', 'Calories burned', 'cal')}${fld('hrv', 'HRV', 'ms')}${fld('rhr', 'Resting HR', 'bpm')}</div>
-      <h4 class="sec">❤️ Apple Health</h4>
+      <h4 class="sec">Activity & body</h4>
       <div class="grid2">${fld('steps', 'Steps', '')}${fld('weight', 'Weight', 'lb')}</div>
-      <h4 class="sec">🔋 How do you feel?</h4>
-      <div class="chips energy">${[1, 2, 3, 4, 5].map(v => `<button class="chip ${energy === v ? 'on' : ''}" data-x="en" data-v="${v}">${['😴', '😕', '🙂', '😃', '🔥'][v - 1]} ${v}</button>`).join('')}</div>
-      <div class="field mt"><label>Journal</label><textarea id="dn" rows="4" placeholder="Practice, soreness, mood, anything…">${esc(d.notes || '')}</textarea></div>`,
+      <h4 class="sec">Energy <span class="muted">(1 = drained, 5 = great)</span></h4>
+      <div class="chips energy">${[1, 2, 3, 4, 5].map(v => `<button class="chip ${energy === v ? 'on' : ''}" data-x="en" data-v="${v}">${v}</button>`).join('')}</div>
+      <div class="field mt"><label>Journal</label><textarea id="dn" rows="4" placeholder="Training, soreness, mood…">${esc(d.notes || '')}</textarea></div>`,
     footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
   });
   s.on('click', '[data-x="en"]', el => { const v = +el.dataset.v; energy = energy === v ? 0 : v; s.$$('[data-x="en"]').forEach(b => b.classList.toggle('on', +b.dataset.v === energy)); });
@@ -1066,14 +1071,14 @@ function openGut({ ep = null, date = ui.date } = {}) {
   const sym = new Set(e.symptoms || []), ctx = new Set(e.context || []);
   const s = openSheet({
     title: ep ? 'Edit stomach log' : 'Stomach log', full: true, lock: true,
-    body: `<h4 class="sec">How bad is it?</h4>
-      <div class="sev">${SEVERITY.map(x => `<button class="${e.severity === x.v ? 'on' : ''}" data-x="sev" data-v="${x.v}"><span>${x.e}</span>${x.t}</button>`).join('')}</div>
-      <h4 class="sec">What's going on?</h4>
+    body: `<h4 class="sec">Severity</h4>
+      <div class="sev">${SEVERITY.map(x => `<button class="${e.severity === x.v ? 'on' : ''}" data-x="sev" data-v="${x.v}"><span>${x.v}</span>${x.t}</button>`).join('')}</div>
+      <h4 class="sec">Symptoms</h4>
       <div class="chips">${SYMPTOMS.map(x => `<button class="chip sm ${sym.has(x) ? 'on' : ''}" data-x="sym" data-v="${x}">${x}</button>`).join('')}</div>
       <div class="grid2 mt"><div class="field"><label>Date</label><input type="date" id="gd" value="${e.date}"></div><div class="field"><label>Time</label><input type="time" id="gt" value="${e.time}"></div></div>
-      <h4 class="sec">Anything else going on? <span class="muted">(optional)</span></h4>
+      <h4 class="sec">Context <span class="muted">(optional)</span></h4>
       <div class="chips">${CONTEXT.map(x => `<button class="chip sm ${ctx.has(x) ? 'on' : ''}" data-x="ctx" data-v="${x}">${x}</button>`).join('')}</div>
-      <div class="field mt"><label>Notes</label><textarea id="gn" rows="3" placeholder="What do you think caused it?">${esc(e.notes || '')}</textarea></div>
+      <div class="field mt"><label>Notes</label><textarea id="gn" rows="3" placeholder="Possible cause, other notes">${esc(e.notes || '')}</textarea></div>
       <div id="recent"></div>
       ${ep ? `<button class="btn ghost danger-t full" data-x="del">Delete</button>` : ''}`,
     footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
@@ -1092,7 +1097,7 @@ function openGut({ ep = null, date = ui.date } = {}) {
     Object.assign(e, { date: s.$('#gd').value || e.date, time: s.$('#gt').value || e.time, symptoms: [...sym], context: [...ctx], notes: s.$('#gn').value.trim() });
     db.put('stomach', e);
     s.close();
-    toast(ep ? 'Saved' : 'Logged. Feel better 💜');
+    toast(ep ? 'Saved' : 'Logged');
   });
   recent();
 }
@@ -1101,11 +1106,57 @@ function openGutHistory() {
   const all = db.list('stomach').sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
   const s = openSheet({
     title: 'Stomach logs', full: true,
-    body: all.length ? all.map(e => { const sv = SEVERITY[e.severity - 1] || SEVERITY[2]; return `<button class="row" data-x="ep" data-id="${e.id}"><span class="thumb ph">${sv.e}</span>
+    body: all.length ? all.map(e => { const sv = SEVERITY[e.severity - 1] || SEVERITY[2]; return `<button class="row" data-x="ep" data-id="${e.id}"><span class="thumb ph">${e.severity}</span>
       <div class="row-main"><div class="row-name">${fmtDay(e.date)} · ${fmtTime(e.time)}</div><div class="row-sub">${sv.t}${(e.symptoms || []).length ? ' · ' + esc(e.symptoms.join(', ')) : ''}${e.notes ? ' · ' + esc(e.notes) : ''}</div></div><span class="chev">›</span></button>`; }).join('')
-      : `<p class="muted center">No stomach logs yet. That's a good thing!</p>`,
+      : `<p class="muted center">No stomach logs yet.</p>`,
   });
   s.on('click', '[data-x="ep"]', el => { s.close(); openGut({ ep: db.get('stomach', el.dataset.id) }); });
+}
+
+// ---------- calendar ----------
+function openCalendar() {
+  let month = ui.date.slice(0, 7);
+  const s = openSheet({
+    title: 'Calendar', full: true,
+    body: `<div class="cal-nav"><button class="icon-btn" data-x="prev" aria-label="Previous month">‹</button><b id="calTitle"></b><button class="icon-btn" data-x="next" aria-label="Next month">›</button></div>
+      <div class="cal-grid cal-wd">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(d => `<span>${d}</span>`).join('')}</div>
+      <div class="cal-grid" id="calGrid"></div>
+      <div class="cal-legend"><span><i class="lg on"></i>On target</span><span><i class="lg under"></i>Under</span><span><i class="lg over"></i>Over</span><span><i class="mk gut"></i>Symptoms</span><span><i class="mk sleep"></i>Recovery logged</span></div>
+      <div id="calSum"></div>`,
+  });
+  function draw() {
+    const first = parseDate(month + '-01'), y = first.getFullYear(), m = first.getMonth();
+    const nDays = new Date(y, m + 1, 0).getDate(), today = dateStr(), g = goals();
+    s.$('#calTitle').textContent = first.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    const by = {};
+    db.list('entries').forEach(e => { if (e.date.startsWith(month)) (by[e.date] ||= []).push(e.macros); });
+    const eps = {};
+    db.list('stomach').forEach(e => { if (e.date.startsWith(month)) eps[e.date] = (eps[e.date] || 0) + 1; });
+    let cells = '<span></span>'.repeat(first.getDay());
+    const logged = [];
+    for (let d = 1; d <= nDays; d++) {
+      const ds = `${month}-${String(d).padStart(2, '0')}`;
+      const t = by[ds] ? sumMacros(by[ds]) : null;
+      const day = db.get('days', ds);
+      if (t) logged.push(t);
+      const r = t ? t.cal / (g.cal || 1) : 0;
+      const cls = !t ? '' : r < 0.9 ? 'under' : r > 1.1 ? 'over' : 'on';
+      cells += `<button class="cal-day ${cls} ${ds === today ? 'today' : ''} ${ds === ui.date ? 'sel' : ''} ${ds > today ? 'future' : ''}" data-x="day" data-d="${ds}">
+        <span class="cal-n">${d}</span><span class="cal-c">${t ? (t.cal >= 1000 ? (t.cal / 1000).toFixed(1) + 'k' : Math.round(t.cal)) : ''}</span>
+        <span class="cal-mk">${eps[ds] ? '<i class="mk gut"></i>' : ''}${day && (day.sleepMin != null || day.recovery != null) ? '<i class="mk sleep"></i>' : ''}</span></button>`;
+    }
+    s.$('#calGrid').innerHTML = cells;
+    const avg = k => logged.length ? logged.reduce((a, t) => a + t[k], 0) / logged.length : 0;
+    const nEp = Object.values(eps).reduce((a, b) => a + b, 0);
+    s.$('#calSum').innerHTML = `<div class="card"><div class="big-stats">
+      <div><b>${logged.length}</b><span>days logged</span></div><div><b>${logged.length ? fmt(avg('cal')) : '–'}</b><span>avg cal</span></div>
+      <div><b>${logged.length ? fmt(avg('p')) + 'g' : '–'}</b><span>avg protein</span></div><div><b>${nEp}</b><span>symptom logs</span></div></div></div>`;
+  }
+  const shift = n => { const d = parseDate(month + '-01'); d.setMonth(d.getMonth() + n); month = dateStr(d).slice(0, 7); draw(); };
+  s.on('click', '[data-x="prev"]', () => shift(-1));
+  s.on('click', '[data-x="next"]', () => shift(1));
+  s.on('click', '[data-x="day"]', el => { s.close(); ui.date = el.dataset.d; go('today'); });
+  draw();
 }
 
 // ---------- backup / export ----------
@@ -1167,7 +1218,7 @@ function showWelcome() {
   fullscreen(`<div class="welcome">
     <img src="icons/icon-192.png" class="logo" alt="">
     <h1>Welcome to Pulse</h1>
-    <p class="muted">Macros, recovery, recipes & gut health — all in one place.</p>
+    <p class="muted">Nutrition, recovery and digestion in one place.</p>
     <form id="wf" class="card">
       <div class="field"><label>Your name</label><input name="name" autocomplete="given-name" placeholder="First name" required></div>
       <h4 class="sec">Daily goals <span class="muted">— from your dietitian, or a starting guess</span></h4>
@@ -1178,9 +1229,8 @@ function showWelcome() {
         <div class="field"><label>Fat (g)</label><input name="f" inputmode="decimal" value="${DEFAULT_GOALS.f}"></div>
       </div>
       <p class="muted tiny">You can change these anytime in the Me tab.</p>
-      <button class="btn primary big full">Let's go 💜</button>
+      <button class="btn primary big full">Get started</button>
     </form>
-    ${!isStandalone() ? `<p class="muted small center">Tip: in Safari tap Share ⬆︎ → <b>Add to Home Screen</b> to install Pulse like an app.</p>` : ''}
   </div>`);
   $('#wf').onsubmit = e => {
     e.preventDefault();
@@ -1194,7 +1244,7 @@ function showAuth(mode = 'in', msg = '') {
   fullscreen(`<div class="welcome">
     <img src="icons/icon-192.png" class="logo" alt="">
     <h1>Pulse</h1>
-    <p class="muted">Macros, recovery, recipes & gut health — all in one place.</p>
+    <p class="muted">Nutrition, recovery and digestion in one place.</p>
     <form id="af" class="card">
       <div class="seg">${[['in', 'Sign in'], ['up', 'Create account']].map(([k, l]) => `<button type="button" class="${mode === k ? 'on' : ''}" data-m="${k}">${l}</button>`).join('')}</div>
       <div class="field mt"><label>Email</label><input name="email" type="email" autocomplete="email" required></div>
@@ -1218,7 +1268,7 @@ function showAuth(mode = 'in', msg = '') {
     try {
       if (mode === 'up') {
         const r = await sync.signUp(email, pw);
-        if (r.needsConfirm) { showAuth('in', '📬 Check your email to confirm your account, then sign in here.'); return; }
+        if (r.needsConfirm) { showAuth('in', 'Check your email to confirm your account, then sign in here.'); return; }
         await afterLogin(r.user);
       } else {
         await afterLogin(await sync.signIn(email, pw));
