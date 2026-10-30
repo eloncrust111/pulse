@@ -8,10 +8,10 @@ import { offSearch, offBarcode, startScanner, readLabel } from './lookup.js';
 
 // ---------- constants ----------
 const MEALS = [
-  { id: 'breakfast', name: 'Breakfast', time: '08:00' },
-  { id: 'lunch', name: 'Lunch', time: '12:30' },
-  { id: 'dinner', name: 'Dinner', time: '18:30' },
-  { id: 'snack', name: 'Snacks', time: '15:30' },
+  { id: 'breakfast', name: 'Breakfast', icon: '🍳', time: '08:00' },
+  { id: 'lunch', name: 'Lunch', icon: '🥗', time: '12:30' },
+  { id: 'dinner', name: 'Dinner', icon: '🍝', time: '18:30' },
+  { id: 'snack', name: 'Snacks', icon: '🍎', time: '15:30' },
 ];
 const mealById = id => MEALS.find(m => m.id === id) || MEALS[3];
 const TAGS = ['Dairy', 'Gluten', 'Spicy', 'Fried / greasy', 'Caffeine', 'Artificial sweetener', 'Sugar alcohol',
@@ -19,7 +19,8 @@ const TAGS = ['Dairy', 'Gluten', 'Spicy', 'Fried / greasy', 'Caffeine', 'Artific
 const SYMPTOMS = ['Bloating', 'Cramps', 'Nausea', 'Gas', 'Heartburn', 'Diarrhea', 'Constipation', 'Sharp pain', 'Urgency'];
 const CONTEXT = ['Stressed', 'Period', 'Hard workout', 'Competition', 'Traveling', 'Poor sleep', 'Ate quickly'];
 const SEVERITY = [
-  { v: 1, t: 'Very mild' }, { v: 2, t: 'Mild' }, { v: 3, t: 'Moderate' }, { v: 4, t: 'Bad' }, { v: 5, t: 'Severe' }];
+  { v: 1, e: '🙂', t: 'Very mild' }, { v: 2, e: '😕', t: 'Mild' }, { v: 3, e: '😣', t: 'Moderate' },
+  { v: 4, e: '😖', t: 'Bad' }, { v: 5, e: '😫', t: 'Severe' }];
 const DEFAULT_GOALS = { cal: 2400, p: 140, c: 300, f: 75, fiber: 30, water: 100 };
 
 const profile = () => db.get('settings', 'profile');
@@ -105,7 +106,7 @@ function confirmSheet(msg, yes = 'Delete', danger = true) {
   });
 }
 
-const thumb = (photo, name) => photo ? `<img class="thumb" src="${photo}" alt="">` : `<span class="thumb ph">${esc((name || '?').trim().charAt(0).toUpperCase())}</span>`;
+const thumb = (photo, fallback) => photo ? `<img class="thumb" src="${photo}" alt="">` : `<span class="thumb ph">${fallback}</span>`;
 const IC = {
   camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
   barcode: '<path d="M4 5v14M7 5v14M11 5v14M14 5v14M18 5v14M20 5v14"/>',
@@ -221,7 +222,7 @@ function mealCard(m, ents, date) {
   const tot = sumMacros(ents.map(e => e.macros));
   const yest = !ents.length && db.list('entries').some(e => e.date === addDays(date, -1) && e.meal === m.id);
   return `<section class="card meal">
-    <div class="meal-head"><div class="meal-title">${m.name}</div>${ents.length ? `<div class="meal-cal">${fmt(tot.cal)} cal</div>` : ''}</div>
+    <div class="meal-head"><div class="meal-title"><span class="meal-ico">${m.icon}</span>${m.name}</div>${ents.length ? `<div class="meal-cal">${fmt(tot.cal)} cal</div>` : ''}</div>
     ${ents.map(e => `<button class="entry" data-act="editEntry" data-id="${e.id}">
         <div class="e-main"><div class="e-name">${esc(e.name)}</div>
         <div class="e-sub">${e.grams ? fmt(e.grams) + ' g · ' : ''}${macroLine(e.macros)}</div></div>
@@ -235,7 +236,7 @@ function mealCard(m, ents, date) {
 function waterCard(day, g) {
   const w = day.water || 0, pct = Math.min(100, w / (g.water || 1) * 100);
   return `<section class="card water">
-    <div class="card-head"><h3>Water</h3><span class="muted"><b class="tx">${fmt(w)}</b> / ${fmt(g.water)} oz</span></div>
+    <div class="card-head"><h3>💧 Water</h3><span class="muted"><b class="tx">${fmt(w)}</b> / ${fmt(g.water)} oz</span></div>
     <div class="w-track"><i style="width:${pct}%"></i></div>
     <div class="w-btns"><button data-act="water" data-oz="-8" aria-label="Remove 8 oz">−</button>
       <button data-act="water" data-oz="8">+8</button><button data-act="water" data-oz="16">+16</button><button data-act="water" data-oz="32">+32</button></div>
@@ -244,18 +245,18 @@ function waterCard(day, g) {
 
 function bodyCard(d) {
   const items = [
-    ['Sleep', d.sleepMin != null ? fmtSleep(d.sleepMin) : null],
-    ['Recovery', d.recovery != null ? d.recovery + '%' : null],
-    ['Strain', d.strain != null ? d.strain : null],
-    ['Burned', d.burned != null ? fmt(d.burned) : null],
-    ['HRV', d.hrv != null ? d.hrv + ' ms' : null],
-    ['Steps', d.steps != null ? fmt(d.steps) : null],
-    ['Weight', d.weight != null ? d.weight + ' lb' : null],
-    ['Energy', d.energy ? d.energy + '/5' : null],
-  ].filter(i => i[1] != null);
+    ['😴', 'Sleep', d.sleepMin != null ? fmtSleep(d.sleepMin) : null],
+    ['💚', 'Recovery', d.recovery != null ? d.recovery + '%' : null],
+    ['⚡', 'Strain', d.strain != null ? d.strain : null],
+    ['🔥', 'Burned', d.burned != null ? fmt(d.burned) : null],
+    ['💓', 'HRV', d.hrv != null ? d.hrv + ' ms' : null],
+    ['👟', 'Steps', d.steps != null ? fmt(d.steps) : null],
+    ['⚖️', 'Weight', d.weight != null ? d.weight + ' lb' : null],
+    ['🔋', 'Energy', d.energy ? d.energy + '/5' : null],
+  ].filter(i => i[2] != null);
   return `<section class="card tap" data-act="body">
     <div class="card-head"><h3>Recovery & sleep</h3><span class="link">${items.length ? 'Edit' : 'Log'}</span></div>
-    ${items.length ? `<div class="stat-grid">${items.map(i => `<div class="stat"><div class="stat-v">${esc(i[1])}</div><div class="stat-l">${i[0]}</div></div>`).join('')}</div>
+    ${items.length ? `<div class="stat-grid">${items.map(i => `<div class="stat"><span class="stat-ico">${i[0]}</span><div><div class="stat-v">${esc(i[2])}</div><div class="stat-l">${i[1]}</div></div></div>`).join('')}</div>
       ${d.notes ? `<p class="note">“${esc(d.notes)}”</p>` : ''}`
     : `<p class="muted small">Sleep, recovery and strain from your wearable, calories burned, steps, and notes.</p>`}
   </section>`;
@@ -266,8 +267,8 @@ function gutCard(date) {
   return `<section class="card gut">
     <div class="card-head"><h3>Digestion</h3>${eps.length ? `<span class="muted small">${eps.length} logged</span>` : ''}</div>
     ${eps.map(e => { const s = SEVERITY[e.severity - 1] || SEVERITY[2]; return `<button class="entry" data-act="editGut" data-id="${e.id}">
-      <div class="e-main"><div class="e-name">${s.t} (${e.severity}/5) · ${fmtTime(e.time)}</div><div class="e-sub">${esc((e.symptoms || []).join(', ') || 'No symptoms picked')}</div></div><div class="chev">›</div></button>`; }).join('')}
-    <button class="btn soft full" data-act="gut">Log stomach symptoms</button>
+      <div class="e-main"><div class="e-name">${s.e} ${s.t} · ${fmtTime(e.time)}</div><div class="e-sub">${esc((e.symptoms || []).join(', ') || 'No symptoms picked')}</div></div><div class="chev">›</div></button>`; }).join('')}
+    <button class="gut-btn" data-act="gut">Log stomach symptoms</button>
     ${!eps.length ? `<p class="muted small center">Log symptoms when they happen. Over time, Trends flags foods that often come before them.</p>` : ''}
   </section>`;
 }
@@ -283,20 +284,20 @@ function sortedFoods(q = '') {
 }
 function foodListHTML() {
   const list = sortedFoods(ui.foodQ);
-  if (!db.list('foods').length) return `<div class="empty"><b>Save the foods you buy</b>
+  if (!db.list('foods').length) return `<div class="empty"><div class="empty-ico">🏷️</div><b>Save the foods you buy</b>
     <p>Photograph the nutrition label or scan the barcode once. After that, enter the grams you weighed and the macros are calculated for you.</p>
     <button class="btn primary" data-act="newFood">＋ Add your first food</button></div>`;
   if (!list.length) return `<p class="muted center">No foods match “${esc(ui.foodQ)}”.</p>`;
-  return list.map(f => `<button class="row" data-act="food" data-id="${f.id}">${thumb(f.photo, f.name)}
+  return list.map(f => `<button class="row" data-act="food" data-id="${f.id}">${thumb(f.photo, '🥣')}
     <div class="row-main"><div class="row-name">${esc(f.name)}${f.fav ? ' <span class="star">★</span>' : ''}</div><div class="row-sub">${foodSub(f)}</div></div><span class="chev">›</span></button>`).join('');
 }
 function screenFoods() {
   return `${header('My Foods', `${db.list('foods').length} saved`)}
   <div class="pad">
     <div class="action-grid">
-      <button class="action" data-act="newFood">${icon('camera')}Snap label</button>
-      <button class="action" data-act="scan">${icon('barcode')}Scan barcode</button>
-      <button class="action" data-act="online">${icon('search')}Search online</button>
+      <button class="action" data-act="newFood"><span>📷</span>Snap label</button>
+      <button class="action" data-act="scan"><span>▦</span>Scan barcode</button>
+      <button class="action" data-act="online"><span>🔎</span>Search online</button>
     </div>
     <div class="search"><input type="search" placeholder="Search my foods" value="${esc(ui.foodQ)}" data-input="foodQ" autocomplete="off"></div>
     <div class="list" id="foodList">${foodListHTML()}</div>
@@ -307,14 +308,14 @@ function screenFoods() {
 function recipeListHTML() {
   const q = ui.recipeQ.trim().toLowerCase();
   const all = db.list('recipes');
-  if (!all.length) return `<div class="empty"><b>No recipes yet</b>
+  if (!all.length) return `<div class="empty"><div class="empty-ico">🍲</div><b>No recipes yet</b>
     <p>Build a recipe from your saved foods, weigh the finished dish, and log any amount of it in grams — macros calculated automatically.</p>
     <button class="btn primary" data-act="newRecipe">＋ New recipe</button></div>`;
   const list = all.filter(r => !q || r.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name));
   return list.map(r => {
     const info = recipeInfo(r, getFood);
     const per = info.servings ? scale(info.total, 1 / info.servings) : scale(info.per, 100);
-    return `<button class="row" data-act="recipe" data-id="${r.id}">${thumb(r.photo, r.name)}
+    return `<button class="row" data-act="recipe" data-id="${r.id}">${thumb(r.photo, '🍲')}
       <div class="row-main"><div class="row-name">${esc(r.name)}</div>
       <div class="row-sub">${fmt(per.cal)} cal ${info.servings ? '/ serving' : '/ 100 g'} · ${macroLine(per)}</div></div><span class="chev">›</span></button>`;
   }).join('') || `<p class="muted center">No recipes match.</p>`;
@@ -365,7 +366,7 @@ function screenTrends() {
   db.list('entries').forEach(e => { if (e.date >= dates[0] && e.kind !== 'quick') { const c = counts.get(e.name) || { n: 0, cal: 0 }; c.n++; c.cal += e.macros.cal; counts.set(e.name, c); } });
   const top = [...counts.entries()].sort((a, b) => b[1].n - a[1].n).slice(0, 5);
 
-  return `${header('Trends', streak() ? `Logged ${streak()} day${streak() === 1 ? '' : 's'} in a row` : '', `<button class="top-btn" data-act="calendar">${icon('calendar')} Calendar</button>`)}
+  return `${header('Trends', streak() ? `🔥 ${streak()}-day logging streak` : '', `<button class="top-btn" data-act="calendar">${icon('calendar')} Calendar</button>`)}
   <div class="pad">
     <div class="seg range">${[7, 30, 90].map(r => `<button class="${ui.range === r ? 'on' : ''}" data-act="range" data-r="${r}">${r === 7 ? 'Week' : r === 30 ? 'Month' : '3 months'}</button>`).join('')}</div>
 
@@ -431,7 +432,7 @@ function gutTrends(dates) {
   const sym = new Map();
   inRange.forEach(e => (e.symptoms || []).forEach(s => sym.set(s, (sym.get(s) || 0) + 1)));
   return `<section class="card gut-trends">
-    <div class="card-head"><h3>Digestion patterns</h3></div>
+    <div class="card-head"><h3>🔍 Digestion patterns</h3></div>
     <div class="big-stats"><div><b>${inRange.length}</b><span>episodes this range</span></div><div><b>${inRange.length ? (inRange.reduce((s, e) => s + e.severity, 0) / inRange.length).toFixed(1) : '–'}</b><span>avg severity /5</span></div></div>
     ${sym.size ? `<p class="small">Most common: ${[...sym.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(s => `<b>${esc(s[0])}</b> (${s[1]})`).join(', ')}</p>` : ''}
     ${a.episodes < 3 ? `<p class="muted small">Log at least 3 stomach episodes (and keep logging food) and this will start pointing out possible trigger foods.</p>` : `
@@ -439,7 +440,7 @@ function gutTrends(dates) {
         ${[4, 12, 24].map(w => `<button class="chip sm ${ui.gutWindow === w ? 'on' : ''}" data-act="gutWin" data-w="${w}">${w}h</button>`).join('')} before it hurt</div>
       <p class="muted small">Normally, ${pct(a.base)} of what you eat is followed by stomach trouble within ${ui.gutWindow}h.</p>
       ${a.foods.length ? `<h4>Possible triggers</h4>${a.foods.map(f => `<div class="suspect"><div><b>${esc(f.name)}</b><div class="muted tiny">Eaten ${f.eaten}× · trouble after ${f.hit} of them</div></div><span class="badge">${pct(f.rate)}</span></div>`).join('')}`
-        : `<p class="small">No clear trigger foods yet.</p>`}
+        : `<p class="small">No clear trigger foods yet. Keep logging 👍</p>`}
       ${a.tags.length ? `<h4>Possible trigger types</h4><div class="chips">${a.tags.map(t => `<span class="chip sm warnchip">${esc(t.name)} · ${pct(t.rate)}</span>`).join('')}</div>` : ''}
       ${a.safe.length ? `<h4>Seem safe for you</h4><div class="chips">${a.safe.map(s => `<span class="chip sm safechip">${esc(s.name)}</span>`).join('')}</div>` : ''}
       <p class="muted tiny">These are patterns, not a diagnosis. Tag foods (dairy, gluten, etc.) to spot trigger types, and talk to a dietitian or doctor about anything persistent.</p>`}
@@ -479,10 +480,10 @@ function screenMe() {
         <div class="btn-row"><button class="btn soft grow" data-act="syncNow">Sync now</button><button class="btn ghost grow" data-act="signOut">Sign out</button></div>`
       : `<p class="small muted">Your data lives on this phone. Download a backup now and then so you never lose it.</p>`}
       <div class="btn-col">
-        <button class="btn soft" data-act="backup">Download backup</button>
-        <label class="btn soft">Restore from backup<input type="file" accept=".json,application/json" hidden data-change="restore"></label>
-        <button class="btn soft" data-act="csvDays">Export daily summary (CSV)</button>
-        <button class="btn soft" data-act="csvFood">Export food log (CSV)</button>
+        <button class="btn soft" data-act="backup">⬇︎ Download backup</button>
+        <label class="btn soft">⬆︎ Restore from backup<input type="file" accept=".json,application/json" hidden data-change="restore"></label>
+        <button class="btn soft" data-act="csvDays">📊 Export daily summary (spreadsheet)</button>
+        <button class="btn soft" data-act="csvFood">🧾 Export food log (spreadsheet)</button>
       </div>
       <p class="muted tiny">${plural(db.list('foods').length, 'food')} · ${plural(db.list('recipes').length, 'recipe')} · ${plural(new Set(db.list('entries').map(e => e.date)).size, 'day')} logged</p>
     </section>
@@ -612,10 +613,10 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
     title: mode === 'log' ? `Add to ${mealById(meal).name}` : 'Add ingredient', full: true,
     body: `<div class="search sticky"><input id="pq" type="search" placeholder="Search my foods${mode === 'log' ? ' & recipes' : ''}" autocomplete="off"></div>
       <div class="tool-row">
-        <button class="tool" data-x="new">${icon('camera')}New food</button>
-        <button class="tool" data-x="scan">${icon('barcode')}Scan</button>
-        <button class="tool" data-x="online">${icon('search')}Online</button>
-        ${mode === 'log' ? `<button class="tool" data-x="quick">${icon('bolt')}Quick add</button>` : ''}
+        <button class="tool" data-x="new"><span>📷</span>New food</button>
+        <button class="tool" data-x="scan"><span>▦</span>Scan</button>
+        <button class="tool" data-x="online"><span>🔎</span>Online</button>
+        ${mode === 'log' ? `<button class="tool" data-x="quick"><span>⚡</span>Quick add</button>` : ''}
       </div>
       <div class="seg" id="ptabs"></div>
       <div class="list" id="plist"></div>`,
@@ -637,9 +638,9 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
       rows = db.list('recipes').sort((a, b) => a.name.localeCompare(b.name)).map(r => ['recipe', r, 'Recipe']);
     }
     s.$('#plist').innerHTML = rows.length ? rows.map(([k, o, sub]) => `<button class="row" data-x="pick" data-k="${k}" data-id="${o.id}">
-        ${thumb(o.photo, o.name)}<div class="row-main"><div class="row-name">${esc(o.name)}${o.fav ? ' <span class="star">★</span>' : ''}</div><div class="row-sub">${sub}</div></div><span class="row-plus">＋</span></button>`).join('')
+        ${thumb(o.photo, k === 'recipe' ? '🍲' : '🥣')}<div class="row-main"><div class="row-name">${esc(o.name)}${o.fav ? ' <span class="star">★</span>' : ''}</div><div class="row-sub">${sub}</div></div><span class="row-plus">＋</span></button>`).join('')
       : `<div class="empty small"><p>${q ? `Nothing saved called “${esc(q)}”.` : tab === 'recipes' ? 'No recipes yet.' : 'No saved foods yet.'}</p>
-         <button class="btn primary" data-x="new">Add it from the label</button>${q ? `<button class="btn soft" data-x="online">Search online for “${esc(q)}”</button>` : ''}</div>`;
+         <button class="btn primary" data-x="new">📷 Add it from the label</button>${q ? `<button class="btn soft" data-x="online">🔎 Search online for “${esc(q)}”</button>` : ''}</div>`;
   }
   const picked = (kind, obj) => {
     if (mode === 'ingredient') { onPick(obj); s.close(); return; }
@@ -673,12 +674,12 @@ function openAmount({ item, entry = null, meal, date, onAdded }) {
   quick.push([100, '100 g']);
   const s = openSheet({
     title: entry ? 'Edit entry' : 'How much?',
-    body: `<div class="amt-food">${thumb(item.photo, item.name)}<div><div class="amt-name">${esc(item.name)}</div><div class="muted small">${esc(item.brand || '')}</div></div></div>
+    body: `<div class="amt-food">${thumb(item.photo, item.kind === 'recipe' ? '🍲' : '🥣')}<div><div class="amt-name">${esc(item.name)}</div><div class="muted small">${esc(item.brand || '')}</div></div></div>
       <div class="amt-input"><input id="amt" type="text" inputmode="decimal" value="${fmtIn(startG)}" autocomplete="off" aria-label="Amount">
         <div class="seg unit">${`<button data-x="unit" data-u="g" class="on">grams</button>`}${item.servingG ? `<button data-x="unit" data-u="s">servings</button>` : ''}</div></div>
       <div class="chips">${quick.map(([g, l]) => `<button class="chip sm" data-x="q" data-g="${g}">${l}</button>`).join('')}</div>
       <div class="amt-prev" id="prev"></div>
-      <div class="field"><label>Meal</label><div class="chips">${MEALS.map(m => `<button class="chip ${m.id === meal ? 'on' : ''}" data-x="meal" data-m="${m.id}">${m.name}</button>`).join('')}</div></div>
+      <div class="field"><label>Meal</label><div class="chips">${MEALS.map(m => `<button class="chip ${m.id === meal ? 'on' : ''}" data-x="meal" data-m="${m.id}">${m.icon} ${m.name}</button>`).join('')}</div></div>
       <div class="field"><label>Time eaten</label><input id="etime" type="time" value="${entry?.time || defaultTime(date, meal)}"></div>`,
     footer: `${entry ? `<button class="btn ghost danger-t" data-x="del">Delete</button>` : ''}<button class="btn primary grow" data-x="save" id="saveBtn"></button>`,
   });
@@ -731,7 +732,7 @@ function openQuick({ entry = null, meal = defaultMeal(), date = ui.date }) {
         <div class="field"><label>Carbs (g)</label><input id="qc" inputmode="decimal" value="${fmtIn(m.c)}"></div>
         <div class="field"><label>Fat (g)</label><input id="qf" inputmode="decimal" value="${fmtIn(m.f)}"></div>
       </div>
-      <div class="field"><label>Meal</label><div class="chips">${MEALS.map(x => `<button class="chip ${x.id === curMeal ? 'on' : ''}" data-x="meal" data-m="${x.id}">${x.name}</button>`).join('')}</div></div>`,
+      <div class="field"><label>Meal</label><div class="chips">${MEALS.map(x => `<button class="chip ${x.id === curMeal ? 'on' : ''}" data-x="meal" data-m="${x.id}">${x.icon} ${x.name}</button>`).join('')}</div></div>`,
     footer: `${entry ? `<button class="btn ghost danger-t" data-x="del">Delete</button>` : ''}<button class="btn primary grow" data-x="save">${entry ? 'Save' : 'Add'}</button>`,
   });
   s.on('click', '[data-x="meal"]', el => { curMeal = el.dataset.m; s.$$('[data-x="meal"]').forEach(b => b.classList.toggle('on', b === el)); });
@@ -756,9 +757,9 @@ function openFoodForm({ food = null, prefill = {}, onSaved } = {}) {
   const s = openSheet({
     title: food ? 'Edit food' : 'New food', full: true, lock: true,
     body: `
-      <label class="photo-box ${f.photo ? 'has' : ''}" id="pbox">${f.photo ? `<img src="${f.photo}" alt="Label photo">` : `<span class="pb-ico">${icon('camera')}</span><b>Photograph the nutrition label</b><span class="muted small">Saved with the food so you never retake it</span>`}
+      <label class="photo-box ${f.photo ? 'has' : ''}" id="pbox">${f.photo ? `<img src="${f.photo}" alt="Label photo">` : `<span class="pb-ico">📷</span><b>Snap the nutrition label</b><span class="muted small">Saved with the food so you never retake it</span>`}
         <input type="file" accept="image/*" hidden id="photoIn"></label>
-      <button class="btn soft full" id="ocrBtn" data-x="ocr" ${photoFile || f.photo ? '' : 'hidden'}>Read the numbers from the photo</button>
+      <button class="btn soft full" id="ocrBtn" data-x="ocr" ${photoFile || f.photo ? '' : 'hidden'}>✨ Fill in the numbers from the photo</button>
       <div class="muted small center" id="ocrMsg"></div>
       <div class="field"><label for="ff-name">Name *</label><input id="ff-name" data-t="name" value="${esc(f.name)}" placeholder="e.g. Fage 0% Greek Yogurt" autocomplete="off"></div>
       <div class="field"><label for="ff-brand">Brand</label><input id="ff-brand" data-t="brand" value="${esc(f.brand || '')}" placeholder="optional" autocomplete="off"></div>
@@ -834,7 +835,7 @@ function openFoodForm({ food = null, prefill = {}, onSaved } = {}) {
     const todays = db.list('entries').filter(e => e.kind === 'food' && e.refId === f.id && e.date === dateStr());
     if (food && todays.length) db.putMany('entries', todays.map(e => ({ ...e, name: f.name, brand: f.brand, per, macros: scale(per, e.grams) })));
     s.close();
-    toast(food ? 'Saved' : 'Food saved');
+    toast(food ? 'Saved' : 'Food saved 🎉');
     onSaved?.(f);
   });
   hint();
@@ -922,7 +923,7 @@ function openOnline({ q = '', onSaved }) {
     s.$('#ores').innerHTML = `<p class="muted center">Searching…</p>`;
     try {
       results = await offSearch(term);
-      s.$('#ores').innerHTML = results.length ? results.map((r, i) => `<button class="row" data-x="r" data-i="${i}">${thumb(null, r.name)}
+      s.$('#ores').innerHTML = results.length ? results.map((r, i) => `<button class="row" data-x="r" data-i="${i}"><span class="thumb ph">🌐</span>
         <div class="row-main"><div class="row-name">${esc(r.name)}</div><div class="row-sub">${esc(r.brand)}${r.brand ? ' · ' : ''}${fmt(num(r.cal))} cal / ${fmt(num(r.servingG))} g</div></div><span class="row-plus">＋</span></button>`).join('')
         : `<p class="muted center">No results. Try fewer words, or snap the label instead.</p>`;
     } catch (e) {
@@ -939,7 +940,7 @@ function openRecipeForm({ recipe = null }) {
   const r = recipe ? JSON.parse(JSON.stringify(recipe)) : { id: uid(), name: '', ingredients: [], cookedG: '', servings: '', steps: '', notes: '', photo: '' };
   const s = openSheet({
     title: recipe ? 'Edit recipe' : 'New recipe', full: true, lock: true,
-    body: `<label class="photo-box small ${r.photo ? 'has' : ''}" id="rpb">${r.photo ? `<img src="${r.photo}" alt="">` : `<span class="pb-ico">${icon('camera')}</span><span class="muted small">Add a photo (optional)</span>`}<input type="file" accept="image/*" hidden id="rph"></label>
+    body: `<label class="photo-box small ${r.photo ? 'has' : ''}" id="rpb">${r.photo ? `<img src="${r.photo}" alt="">` : `<span class="pb-ico">📸</span><span class="muted small">Add a photo (optional)</span>`}<input type="file" accept="image/*" hidden id="rph"></label>
       <div class="field"><label>Recipe name *</label><input id="rn" value="${esc(r.name)}" placeholder="e.g. Overnight oats" autocomplete="off"></div>
       <h4 class="sec">Ingredients</h4>
       <div id="ings"></div>
@@ -1037,18 +1038,18 @@ function openBody(date) {
   const fld = (k, label, unit, ph = '') => `<div class="field"><label>${label}</label><div class="unit-in"><input data-k="${k}" inputmode="decimal" value="${d[k] ?? ''}" placeholder="${ph}"><span>${unit}</span></div></div>`;
   const s = openSheet({
     title: `Recovery · ${fmtDay(date)}`, full: true, lock: true,
-    body: `<h4 class="sec">Sleep (last night)</h4>
+    body: `<h4 class="sec">😴 Sleep (last night)</h4>
       <div class="grid2">
         <div class="field"><label>Hours</label><div class="unit-in"><input id="sh" inputmode="numeric" value="${d.sleepMin != null ? Math.floor(d.sleepMin / 60) : ''}" placeholder="7"><span>h</span></div></div>
         <div class="field"><label>Minutes</label><div class="unit-in"><input id="sm" inputmode="numeric" value="${d.sleepMin != null ? Math.round(d.sleepMin % 60) : ''}" placeholder="45"><span>m</span></div></div>
         ${fld('sleepPerf', 'Sleep performance', '%')}
       </div>
-      <h4 class="sec">Wearable <span class="muted">(Whoop, Oura, Apple Watch…)</span></h4>
+      <h4 class="sec">⌚ Wearable <span class="muted">(Whoop, Oura, Apple Watch…)</span></h4>
       <div class="grid2">${fld('recovery', 'Recovery', '%')}${fld('strain', 'Strain', '/21')}${fld('burned', 'Calories burned', 'cal')}${fld('hrv', 'HRV', 'ms')}${fld('rhr', 'Resting HR', 'bpm')}</div>
-      <h4 class="sec">Activity & body</h4>
+      <h4 class="sec">👟 Activity & body</h4>
       <div class="grid2">${fld('steps', 'Steps', '')}${fld('weight', 'Weight', 'lb')}</div>
-      <h4 class="sec">Energy <span class="muted">(1 = drained, 5 = great)</span></h4>
-      <div class="chips energy">${[1, 2, 3, 4, 5].map(v => `<button class="chip ${energy === v ? 'on' : ''}" data-x="en" data-v="${v}">${v}</button>`).join('')}</div>
+      <h4 class="sec">🔋 How do you feel?</h4>
+      <div class="chips energy">${[1, 2, 3, 4, 5].map(v => `<button class="chip ${energy === v ? 'on' : ''}" data-x="en" data-v="${v}">${['😴', '😕', '🙂', '😃', '🔥'][v - 1]} ${v}</button>`).join('')}</div>
       <div class="field mt"><label>Journal</label><textarea id="dn" rows="4" placeholder="Training, soreness, mood…">${esc(d.notes || '')}</textarea></div>`,
     footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
   });
@@ -1072,7 +1073,7 @@ function openGut({ ep = null, date = ui.date } = {}) {
   const s = openSheet({
     title: ep ? 'Edit stomach log' : 'Stomach log', full: true, lock: true,
     body: `<h4 class="sec">Severity</h4>
-      <div class="sev">${SEVERITY.map(x => `<button class="${e.severity === x.v ? 'on' : ''}" data-x="sev" data-v="${x.v}"><span>${x.v}</span>${x.t}</button>`).join('')}</div>
+      <div class="sev">${SEVERITY.map(x => `<button class="${e.severity === x.v ? 'on' : ''}" data-x="sev" data-v="${x.v}"><span>${x.e}</span>${x.t}</button>`).join('')}</div>
       <h4 class="sec">Symptoms</h4>
       <div class="chips">${SYMPTOMS.map(x => `<button class="chip sm ${sym.has(x) ? 'on' : ''}" data-x="sym" data-v="${x}">${x}</button>`).join('')}</div>
       <div class="grid2 mt"><div class="field"><label>Date</label><input type="date" id="gd" value="${e.date}"></div><div class="field"><label>Time</label><input type="time" id="gt" value="${e.time}"></div></div>
@@ -1106,7 +1107,7 @@ function openGutHistory() {
   const all = db.list('stomach').sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
   const s = openSheet({
     title: 'Stomach logs', full: true,
-    body: all.length ? all.map(e => { const sv = SEVERITY[e.severity - 1] || SEVERITY[2]; return `<button class="row" data-x="ep" data-id="${e.id}"><span class="thumb ph">${e.severity}</span>
+    body: all.length ? all.map(e => { const sv = SEVERITY[e.severity - 1] || SEVERITY[2]; return `<button class="row" data-x="ep" data-id="${e.id}"><span class="thumb ph">${sv.e}</span>
       <div class="row-main"><div class="row-name">${fmtDay(e.date)} · ${fmtTime(e.time)}</div><div class="row-sub">${sv.t}${(e.symptoms || []).length ? ' · ' + esc(e.symptoms.join(', ')) : ''}${e.notes ? ' · ' + esc(e.notes) : ''}</div></div><span class="chev">›</span></button>`; }).join('')
       : `<p class="muted center">No stomach logs yet.</p>`,
   });
@@ -1229,7 +1230,7 @@ function showWelcome() {
         <div class="field"><label>Fat (g)</label><input name="f" inputmode="decimal" value="${DEFAULT_GOALS.f}"></div>
       </div>
       <p class="muted tiny">You can change these anytime in the Me tab.</p>
-      <button class="btn primary big full">Get started</button>
+      <button class="btn primary big full">Let's go</button>
     </form>
   </div>`);
   $('#wf').onsubmit = e => {
@@ -1268,7 +1269,7 @@ function showAuth(mode = 'in', msg = '') {
     try {
       if (mode === 'up') {
         const r = await sync.signUp(email, pw);
-        if (r.needsConfirm) { showAuth('in', 'Check your email to confirm your account, then sign in here.'); return; }
+        if (r.needsConfirm) { showAuth('in', '📬 Check your email to confirm your account, then sign in here.'); return; }
         await afterLogin(r.user);
       } else {
         await afterLogin(await sync.signIn(email, pw));

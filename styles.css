@@ -383,8 +383,7 @@ textarea { resize: vertical; }
 .action .ic, .tool .ic { color: var(--purple-3); width: 24px; height: 24px; }
 .pb-ico .ic { width: 34px; height: 34px; color: var(--purple-3); }
 .top-btn .ic { width: 16px; height: 16px; vertical-align: -3px; margin-right: 2px; }
-.thumb.ph { font-weight: 800; font-size: 18px; color: var(--purple-3); }
-.stat { flex-direction: column; align-items: flex-start; gap: 0; padding: 10px 12px; }
+.thumb.ph { font-weight: 800; color: var(--purple-3); }
 
 /* date button opens the calendar */
 .datebtn { background: none; border: 0; color: #fff; padding: 4px 8px; border-radius: 14px; }

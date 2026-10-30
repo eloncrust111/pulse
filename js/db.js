@@ -29,6 +29,8 @@ export async function init(userKey) {
   if (idb) idb.close();
   KINDS.forEach(k => recs[k].clear());
   idb = await openIDB('pulse-' + userKey);
+  // Let another tab upgrade or delete the database instead of hanging it.
+  idb.onversionchange = () => idb.close();
   const all = await req(idb.transaction('records').objectStore('records').getAll());
   all.forEach(r => recs[r.kind]?.set(r.id, r));
   emit('*');
