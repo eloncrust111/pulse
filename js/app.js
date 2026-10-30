@@ -277,7 +277,7 @@ function sortedFoods(q = '') {
 function foodListHTML() {
   const list = sortedFoods(ui.foodQ);
   if (!db.list('foods').length) return `<div class="empty"><div class="empty-ico">🏷️</div><b>Save your go-to brands once</b>
-    <p>Snap the nutrition label (or scan the barcode) and Fuel remembers it forever. Then just type how many grams you weighed — the math is done for you.</p>
+    <p>Snap the nutrition label (or scan the barcode) and Pulse remembers it forever. Then just type how many grams you weighed — the math is done for you.</p>
     <button class="btn primary" data-act="newFood">＋ Add your first food</button></div>`;
   if (!list.length) return `<p class="muted center">No foods match “${esc(ui.foodQ)}”.</p>`;
   return list.map(f => `<button class="row" data-act="food" data-id="${f.id}">${thumb(f.photo, '🥣')}
@@ -480,10 +480,10 @@ function screenMe() {
       <p class="muted tiny">${db.list('foods').length} foods · ${db.list('recipes').length} recipes · ${new Set(db.list('entries').map(e => e.date)).size} days logged</p>
     </section>
 
-    ${!isStandalone() ? `<section class="card install"><h3>📲 Put Fuel on your home screen</h3>
+    ${!isStandalone() ? `<section class="card install"><h3>📲 Put Pulse on your home screen</h3>
       <ol><li>Open this page in <b>Safari</b></li><li>Tap the <b>Share</b> button <span class="kbd">⬆︎</span></li><li>Scroll and tap <b>Add to Home Screen</b></li><li>Tap <b>Add</b> — it opens full-screen like a real app</li></ol></section>` : ''}
 
-    <p class="muted tiny center">Fuel v1.0 · Go Pilots 💜</p>
+    <p class="muted tiny center">Pulse v1.0 · Go Pilots 💜</p>
   </div>`;
 }
 
@@ -516,7 +516,7 @@ const acts = {
     toast('Fat ≈ 27% of calories, carbs fill the rest');
   },
   syncNow: () => sync.syncNow(),
-  signOut: async () => { if (await confirmSheet('Sign out of Fuel on this phone?', 'Sign out', false)) { await sync.signOut(); location.reload(); } },
+  signOut: async () => { if (await confirmSheet('Sign out of Pulse on this phone?', 'Sign out', false)) { await sync.signOut(); location.reload(); } },
   backup: () => exportBackup(),
   csvDays: () => exportDaysCSV(),
   csvFood: () => exportFoodCSV(),
@@ -1121,17 +1121,17 @@ async function shareFile(name, text, type) {
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
 function exportBackup() {
-  shareFile(`fuel-backup-${dateStr()}.json`, JSON.stringify({ app: 'fuel', version: 1, exportedAt: new Date().toISOString(), records: db.allRecords() }), 'application/json');
+  shareFile(`pulse-backup-${dateStr()}.json`, JSON.stringify({ app: 'pulse', version: 1, exportedAt: new Date().toISOString(), records: db.allRecords() }), 'application/json');
 }
 async function restoreBackup(file) {
   if (!file) return;
   try {
     const j = JSON.parse(await file.text());
-    if (j.app !== 'fuel' || !Array.isArray(j.records)) throw new Error();
+    if (j.app !== 'pulse' || !Array.isArray(j.records)) throw new Error();
     const n = await db.applyRemote(j.records, { markDirty: true });
     sync.schedule(200);
     toast(`Restored ${n} items`);
-  } catch { toast("That doesn't look like a Fuel backup"); }
+  } catch { toast("That doesn't look like a Pulse backup"); }
 }
 const csvCell = v => v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
 const toCSV = rows => rows.map(r => r.map(csvCell).join(',')).join('\n');
@@ -1146,14 +1146,14 @@ function exportDaysCSV() {
     rows.push([d, t && Math.round(t.cal), t && r1(t.p), t && r1(t.c), t && r1(t.f), t && r1(t.fiber), x.water, x.sleepMin != null ? r1(x.sleepMin / 60) : '',
       x.sleepPerf, x.recovery, x.strain, x.hrv, x.rhr, x.burned, x.steps, x.weight, x.energy, db.list('stomach').filter(s => s.date === d).length, x.notes]);
   });
-  shareFile(`fuel-daily-${dateStr()}.csv`, toCSV(rows), 'text/csv');
+  shareFile(`pulse-daily-${dateStr()}.csv`, toCSV(rows), 'text/csv');
 }
 function exportFoodCSV() {
   const rows = [['date', 'time', 'meal', 'food', 'brand', 'grams', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'fiber_g']];
   const r1 = v => Math.round((v || 0) * 10) / 10;
   db.list('entries').sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
     .forEach(e => rows.push([e.date, e.time, e.meal, e.name, e.brand, e.grams && r1(e.grams), Math.round(e.macros.cal), r1(e.macros.p), r1(e.macros.c), r1(e.macros.f), r1(e.macros.fiber)]));
-  shareFile(`fuel-food-log-${dateStr()}.csv`, toCSV(rows), 'text/csv');
+  shareFile(`pulse-food-log-${dateStr()}.csv`, toCSV(rows), 'text/csv');
 }
 
 // ---------- onboarding & auth ----------
@@ -1166,7 +1166,7 @@ function fullscreen(html) {
 function showWelcome() {
   fullscreen(`<div class="welcome">
     <img src="icons/icon-192.png" class="logo" alt="">
-    <h1>Welcome to Fuel</h1>
+    <h1>Welcome to Pulse</h1>
     <p class="muted">Macros, recovery, recipes & gut health — all in one place.</p>
     <form id="wf" class="card">
       <div class="field"><label>Your name</label><input name="name" autocomplete="given-name" placeholder="First name" required></div>
@@ -1180,7 +1180,7 @@ function showWelcome() {
       <p class="muted tiny">You can change these anytime in the Me tab.</p>
       <button class="btn primary big full">Let's go 💜</button>
     </form>
-    ${!isStandalone() ? `<p class="muted small center">Tip: in Safari tap Share ⬆︎ → <b>Add to Home Screen</b> to install Fuel like an app.</p>` : ''}
+    ${!isStandalone() ? `<p class="muted small center">Tip: in Safari tap Share ⬆︎ → <b>Add to Home Screen</b> to install Pulse like an app.</p>` : ''}
   </div>`);
   $('#wf').onsubmit = e => {
     e.preventDefault();
@@ -1193,7 +1193,7 @@ function showWelcome() {
 function showAuth(mode = 'in', msg = '') {
   fullscreen(`<div class="welcome">
     <img src="icons/icon-192.png" class="logo" alt="">
-    <h1>Fuel</h1>
+    <h1>Pulse</h1>
     <p class="muted">Macros, recovery, recipes & gut health — all in one place.</p>
     <form id="af" class="card">
       <div class="seg">${[['in', 'Sign in'], ['up', 'Create account']].map(([k, l]) => `<button type="button" class="${mode === k ? 'on' : ''}" data-m="${k}">${l}</button>`).join('')}</div>
@@ -1287,7 +1287,7 @@ async function boot() {
     if (!profile()) showWelcome(); else startApp();
   } catch (e) {
     console.error(e);
-    fullscreen(`<div class="welcome"><h1>Hmm…</h1><p class="muted">Fuel couldn't start: ${esc(e.message)}</p><button class="btn primary" onclick="location.reload()">Try again</button></div>`);
+    fullscreen(`<div class="welcome"><h1>Hmm…</h1><p class="muted">Pulse couldn't start: ${esc(e.message)}</p><button class="btn primary" onclick="location.reload()">Try again</button></div>`);
   }
 }
 boot();

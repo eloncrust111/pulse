@@ -28,7 +28,7 @@ function openIDB(name) {
 export async function init(userKey) {
   if (idb) idb.close();
   KINDS.forEach(k => recs[k].clear());
-  idb = await openIDB('fuel-' + userKey);
+  idb = await openIDB('pulse-' + userKey);
   const all = await req(idb.transaction('records').objectStore('records').getAll());
   all.forEach(r => recs[r.kind]?.set(r.id, r));
   emit('*');

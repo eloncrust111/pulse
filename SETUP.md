@@ -1,20 +1,20 @@
-# Fuel — setup guide
+# Pulse — setup guide
 
-Fuel is a web app (PWA). It's hosted free on GitHub Pages and installs to the iPhone
+Pulse is a web app (PWA). It's hosted free on GitHub Pages and installs to the iPhone
 home screen with its own icon, full-screen, no browser bars. It works offline.
 
 ## 1. Put it online (GitHub Pages, free)
 
-1. On github.com, click **New repository**. Name it `fuel`, set it to **Public**, and create it.
+1. On github.com, click **New repository**. Name it `pulse`, set it to **Public**, and create it.
 2. Push this folder to it:
    ```
-   git remote add origin https://github.com/<your-username>/fuel.git
+   git remote add origin https://github.com/<your-username>/pulse.git
    git push -u origin main
    ```
    (Or on the repo page: **Add file → Upload files**, then drag in everything in this folder.)
 3. In the repo: **Settings → Pages → Build and deployment → Source: Deploy from a branch**,
    then pick **main** and **/ (root)**, and click **Save**.
-4. After a minute the app is live at `https://<your-username>.github.io/fuel/`.
+4. After a minute the app is live at `https://<your-username>.github.io/pulse/`.
 
 ## 2. Install it on an iPhone
 

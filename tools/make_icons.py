@@ -1,4 +1,4 @@
-"""Generates Fuel's app icons: a white basketball with a lightning-bolt seam on Portland purple.
+"""Generates Pulse's app icons: a white basketball with a heartbeat seam on Portland purple.
 
 Run: python tools/make_icons.py
 """
@@ -40,19 +40,20 @@ def make(ball_scale):
     bd.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(255, 255, 255, 255))
     seam = (45, 32, 128, 255)
     w = int(r * 0.075)
-    # horizontal seam
-    bd.line([(cx - r, cy), (cx + r, cy)], fill=seam, width=w)
-    # side curves
+    # side curves + vertical seam
     k = r * 1.55
     bd.arc([cx - r - k * 0.62 - k, cy - k, cx - r - k * 0.62 + k, cy + k], -38, 38, fill=seam, width=w)
     bd.arc([cx + r + k * 0.62 - k, cy - k, cx + r + k * 0.62 + k, cy + k], 142, 218, fill=seam, width=w)
     bd.line([(cx, cy - r), (cx, cy + r)], fill=seam, width=w)
-    # a bold lightning bolt (the "fuel") with a white keyline so it pops off the seams
-    u = r * 0.62
-    bolt = [(cx + 0.18 * u, cy - 0.95 * u), (cx - 0.42 * u, cy + 0.12 * u), (cx - 0.02 * u, cy + 0.12 * u),
-            (cx - 0.18 * u, cy + 0.95 * u), (cx + 0.42 * u, cy - 0.12 * u), (cx + 0.02 * u, cy - 0.12 * u)]
-    bd.polygon(bolt, fill=(255, 255, 255, 255), outline=(255, 255, 255, 255), width=int(w * 2.2))
-    bd.polygon(bolt, fill=(83, 64, 201, 255))
+    # the horizontal seam becomes a heartbeat line (the "pulse"), with a white keyline
+    beat = [(-1.05, 0), (-0.42, 0), (-0.30, -0.16), (-0.18, 0), (-0.10, 0), (0.02, 0.30), (0.16, -0.62),
+            (0.28, 0.16), (0.36, 0), (0.48, 0), (0.58, -0.13), (0.68, 0), (1.05, 0)]
+    pts = [(cx + x * r, cy + y * r) for x, y in beat]
+    bd.line(pts, fill=(255, 255, 255, 255), width=int(w * 3.2), joint="curve")
+    bd.line(pts, fill=(83, 64, 201, 255), width=int(w * 1.6), joint="curve")
+    for p in pts[1:-1]:  # round the corners
+        rr = w * 0.8
+        bd.ellipse([p[0] - rr, p[1] - rr, p[0] + rr, p[1] + rr], fill=(83, 64, 201, 255))
     # clip seams to the ball
     mask = Image.new("L", (SS, SS), 0)
     ImageDraw.Draw(mask).ellipse([cx - r, cy - r, cx + r, cy + r], fill=255)

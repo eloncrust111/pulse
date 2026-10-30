@@ -4,7 +4,7 @@ import { CONFIG } from '../config.js';
 import * as db from './db.js';
 
 export const enabled = !!(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY);
-const TABLE = 'fuel_records';
+const TABLE = 'pulse_records';
 let client = null, user = null, timer = null, running = false, again = false;
 export let status = 'idle';
 const statusFns = new Set();
