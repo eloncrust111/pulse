@@ -3,7 +3,7 @@
 // timestamp and a dirty flag so the optional cloud sync can merge changes.
 import { uid } from './util.js';
 
-export const KINDS = ['settings', 'foods', 'recipes', 'entries', 'days', 'stomach'];
+export const KINDS = ['settings', 'foods', 'recipes', 'entries', 'days', 'stomach', 'feel'];
 
 const recs = Object.fromEntries(KINDS.map(k => [k, new Map()]));
 const listeners = new Set();

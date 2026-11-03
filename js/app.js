@@ -3,7 +3,7 @@ import * as sync from './sync.js';
 import { $, $$, esc, uid, dateStr, timeStr, parseDate, addDays, toTs, fmtDay, fmtTime, fmtSleep, num, optNum, fmt,
   perGram, scale, sumMacros, recipeInfo, fileToDataURL } from './util.js';
 import { barChart, lineChart } from './charts.js';
-import { analyzeGut } from './patterns.js';
+import { analyzeGut, guessTags, compareDays, median } from './patterns.js';
 import { offSearch, offBarcode, startScanner, readLabel } from './lookup.js';
 
 // ---------- constants ----------
@@ -16,11 +16,22 @@ const MEALS = [
 const mealById = id => MEALS.find(m => m.id === id) || MEALS[3];
 const TAGS = ['Dairy', 'Gluten', 'Spicy', 'Fried / greasy', 'Caffeine', 'Artificial sweetener', 'Sugar alcohol',
   'Beans / legumes', 'High fiber', 'Red meat', 'Carbonated', 'Protein powder', 'Onion / garlic', 'Acidic'];
-const SYMPTOMS = ['Bloating', 'Cramps', 'Nausea', 'Gas', 'Heartburn', 'Diarrhea', 'Constipation', 'Sharp pain', 'Urgency'];
-const CONTEXT = ['Stressed', 'Period', 'Hard workout', 'Competition', 'Traveling', 'Poor sleep', 'Ate quickly'];
+const SYMPTOMS = ['Stomach ache', 'Bloating', 'Cramps', 'Nausea', 'Gas', 'Heartburn', 'Reflux', 'Diarrhea', 'Constipation', 'Sharp pain', 'Urgency'];
+const CONTEXT = ['Stressed', 'Period', 'Hard workout', 'Competition', 'Traveling', 'Poor sleep', 'Ate quickly', 'Big meal',
+  'Ate late', 'Not enough water', 'Ibuprofen / pain meds', 'Sick'];
+const WHERE = ['Upper stomach', 'Lower stomach', 'All over'];
+const DURATION = ['Under 30 min', '1–2 hours', 'Several hours', 'All day'];
 const SEVERITY = [
   { v: 1, e: '🙂', t: 'Very mild' }, { v: 2, e: '😕', t: 'Mild' }, { v: 3, e: '😣', t: 'Moderate' },
   { v: 4, e: '😖', t: 'Bad' }, { v: 5, e: '😫', t: 'Severe' }];
+const FEELINGS = [['😵‍💫', 'Dizzy / lightheaded'], ['🥱', 'Tired / drained'], ['🫨', 'Shaky'], ['🤕', 'Headache'],
+  ['🌫️', 'Brain fog'], ['🦵', 'Heavy legs'], ['🤢', 'Queasy'], ['😰', 'Anxious / on edge'], ['😔', 'Low mood'],
+  ['😤', 'Irritable'], ['🥵', 'Hot / sweaty'], ['🥶', 'Chilled'], ['💓', 'Racing heart'], ['🍽️', 'No appetite'],
+  ['🍩', 'Craving sugar'], ['🤷', 'Just off']];
+const feelEmoji = t => FEELINGS.find(f => f[1] === t)?.[0] || '';
+const OFF_LEVELS = [
+  { v: 1, e: '😐', t: 'A little off' }, { v: 2, e: '😕', t: 'Off' }, { v: 3, e: '😟', t: 'Pretty off' },
+  { v: 4, e: '😣', t: 'Bad' }, { v: 5, e: '😵', t: 'Really bad' }];
 const DEFAULT_GOALS = { cal: 2400, p: 140, c: 300, f: 75, fiber: 30, water: 100 };
 
 const profile = () => db.get('settings', 'profile');
@@ -150,14 +161,55 @@ function lastGrams(kind, id) {
   return best?.grams ?? null;
 }
 
+// A food's own tags, or ones guessed from its name if none were set.
+const foodTags = f => f ? (f.tags?.length ? f.tags : guessTags(f.name + ' ' + (f.brand || ''))) : [];
 function entryTags(e) {
-  if (e.kind === 'food') return getFood(e.refId)?.tags || [];
+  if (e.kind === 'food') return foodTags(getFood(e.refId));
   if (e.kind === 'recipe') {
     const r = db.get('recipes', e.refId);
-    return [...new Set((r?.ingredients || []).flatMap(i => getFood(i.foodId)?.tags || []))];
+    return [...new Set([...(r?.ingredients || []).flatMap(i => foodTags(getFood(i.foodId))), ...guessTags(r?.name)])];
   }
   return [];
 }
+
+// Foods/recipes that stomach logs point to, keyed 'food:id' / 'recipe:id'.
+function gutSuspects() {
+  const a = analyzeGut(db.list('entries'), db.list('stomach'), entryTags, { windowH: 12 });
+  // Warnings only for strong signals, so everyday staples don't get flagged.
+  return new Map(a.episodes >= 3 ? a.foods.filter(f => f.lift >= 1.6 && f.rate >= 0.4).map(f => [f.key, f]) : []);
+}
+
+// One row per day with anything logged, for comparing "off" days to normal ones.
+function dayRows() {
+  const by = {};
+  db.list('entries').forEach(e => (by[e.date] ||= []).push(e));
+  const dates = new Set([...Object.keys(by), ...db.list('days').map(d => d.id)]);
+  return [...dates].sort().map(d => {
+    const t = by[d] ? sumMacros(by[d].map(e => e.macros)) : null;
+    const x = db.get('days', d) || {}, y = db.get('days', addDays(d, -1)) || {};
+    const last = by[d]?.reduce((m, e) => (e.time || '') > m ? e.time : m, '');
+    return { date: d, cal: t?.cal, p: t?.p, c: t?.c, f: t?.f, fiber: t?.fiber, water: x.water || null,
+      sleep: x.sleepMin != null ? x.sleepMin / 60 : null, recovery: x.recovery, strainPrev: y.strain,
+      lastMeal: last ? +last.slice(0, 2) + +last.slice(3, 5) / 60 : null };
+  });
+}
+const hrsMin = h => h == null ? '–' : fmtSleep(h * 60);
+const clock = h => fmtTime(`${String(Math.floor(h)).padStart(2, '0')}:${String(Math.round(h % 1 * 60)).padStart(2, '0')}`);
+const DAY_METRICS = {
+  sleep: { k: 'sleep', e: '😴', label: 'Sleep', fmt: hrsMin, min: 0.08 },
+  recovery: { k: 'recovery', e: '💚', label: 'Recovery', fmt: x => Math.round(x) + '%' },
+  cal: { k: 'cal', e: '🔥', label: 'Calories eaten', fmt: x => fmt(x) },
+  c: { k: 'c', e: '🍞', label: 'Carbs', fmt: x => fmt(x) + ' g' },
+  p: { k: 'p', e: '🥩', label: 'Protein', fmt: x => fmt(x) + ' g' },
+  f: { k: 'f', e: '🧈', label: 'Fat', fmt: x => fmt(x) + ' g', min: 0.15 },
+  fiber: { k: 'fiber', e: '🥦', label: 'Fiber', fmt: x => fmt(x) + ' g', min: 0.2 },
+  water: { k: 'water', e: '💧', label: 'Water', fmt: x => fmt(x) + ' oz', min: 0.15 },
+  strainPrev: { k: 'strainPrev', e: '⚡', label: "Day-before strain", fmt: x => (Math.round(x * 10) / 10).toString() },
+  lastMeal: { k: 'lastMeal', e: '🌙', label: 'Last bite of the day', fmt: clock, min: 0.06 },
+};
+const diffRows = list => list.map(m => `<div class="diff"><span class="diff-ico">${m.e}</span><div class="grow"><b>${m.label}</b>
+  <div class="muted tiny">${m.fmt(m.flag)} on those days vs ${m.fmt(m.other)} other days</div></div>
+  <span class="badge ${m.rel > 0 ? 'up' : 'down'}">${m.rel > 0 ? '▲' : '▼'} ${Math.round(Math.abs(m.rel) * 100)}%</span></div>`).join('');
 
 const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 function fmtIn(v) { return v == null || v === '' ? '' : String(Math.round(v * 10) / 10); }
@@ -214,6 +266,7 @@ function screenToday() {
   ${MEALS.map(m => mealCard(m, ents.filter(e => e.meal === m.id), d)).join('')}
   ${waterCard(day, g)}
   ${bodyCard(day)}
+  ${feelCard(d)}
   ${gutCard(d)}
   <div class="spacer"></div>`;
 }
@@ -270,6 +323,17 @@ function gutCard(date) {
       <div class="e-main"><div class="e-name">${s.e} ${s.t} · ${fmtTime(e.time)}</div><div class="e-sub">${esc((e.symptoms || []).join(', ') || 'No symptoms picked')}</div></div><div class="chev">›</div></button>`; }).join('')}
     <button class="gut-btn" data-act="gut">Log stomach symptoms</button>
     ${!eps.length ? `<p class="muted small center">Log symptoms when they happen. Over time, Trends flags foods that often come before them.</p>` : ''}
+  </section>`;
+}
+
+function feelCard(date) {
+  const logs = db.list('feel').filter(e => e.date === date).sort((a, b) => a.time.localeCompare(b.time));
+  return `<section class="card feel">
+    <div class="card-head"><h3>How you feel</h3>${logs.length ? `<span class="muted small">${logs.length} logged</span>` : ''}</div>
+    ${logs.map(e => { const l = OFF_LEVELS[e.level - 1] || OFF_LEVELS[1]; return `<button class="entry" data-act="editFeel" data-id="${e.id}">
+      <div class="e-main"><div class="e-name">${l.e} ${l.t} · ${fmtTime(e.time)}</div><div class="e-sub">${esc((e.feelings || []).join(', ') || 'Just off')}</div></div><div class="chev">›</div></button>`; }).join('')}
+    <button class="feel-btn" data-act="feel">Feeling off? Log it</button>
+    ${!logs.length ? `<p class="muted small center">Dizzy, drained, foggy, shaky… log it and Pulse checks your sleep, food and recovery for likely reasons.</p>` : ''}
   </section>`;
 }
 
@@ -420,6 +484,7 @@ function screenTrends() {
 
     ${top.length ? `<section class="card"><h3>Most-logged foods</h3>${top.map(([name, c]) => `<div class="kv-row"><span>${esc(name)}</span><span class="muted">${c.n}×</span></div>`).join('')}</section>` : ''}
 
+    ${feelTrends(dates)}
     ${gutTrends(dates)}
   </div>`;
 }
@@ -433,8 +498,9 @@ function gutTrends(dates) {
   inRange.forEach(e => (e.symptoms || []).forEach(s => sym.set(s, (sym.get(s) || 0) + 1)));
   return `<section class="card gut-trends">
     <div class="card-head"><h3>🔍 Digestion patterns</h3></div>
-    <div class="big-stats"><div><b>${inRange.length}</b><span>episodes this range</span></div><div><b>${inRange.length ? (inRange.reduce((s, e) => s + e.severity, 0) / inRange.length).toFixed(1) : '–'}</b><span>avg severity /5</span></div></div>
+    <div class="big-stats"><div><b>${inRange.length}</b><span>episodes this range</span></div><div><b>${inRange.length ? (inRange.reduce((s, e) => s + e.severity, 0) / inRange.length).toFixed(1) : '–'}</b><span>avg severity /5</span></div><div><b>${new Set(inRange.map(e => e.date)).size}</b><span>days affected</span></div></div>
     ${sym.size ? `<p class="small">Most common: ${[...sym.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(s => `<b>${esc(s[0])}</b> (${s[1]})`).join(', ')}</p>` : ''}
+    ${gutTiming(all)}
     ${a.episodes < 3 ? `<p class="muted small">Log at least 3 stomach episodes (and keep logging food) and this will start pointing out possible trigger foods.</p>` : `
       <div class="win">Look at food eaten within
         ${[4, 12, 24].map(w => `<button class="chip sm ${ui.gutWindow === w ? 'on' : ''}" data-act="gutWin" data-w="${w}">${w}h</button>`).join('')} before it hurt</div>
@@ -443,8 +509,64 @@ function gutTrends(dates) {
         : `<p class="small">No clear trigger foods yet. Keep logging 👍</p>`}
       ${a.tags.length ? `<h4>Possible trigger types</h4><div class="chips">${a.tags.map(t => `<span class="chip sm warnchip">${esc(t.name)} · ${pct(t.rate)}</span>`).join('')}</div>` : ''}
       ${a.safe.length ? `<h4>Seem safe for you</h4><div class="chips">${a.safe.map(s => `<span class="chip sm safechip">${esc(s.name)}</span>`).join('')}</div>` : ''}
-      <p class="muted tiny">These are patterns, not a diagnosis. Tag foods (dairy, gluten, etc.) to spot trigger types, and talk to a dietitian or doctor about anything persistent.</p>`}
-    <button class="btn soft full" data-act="gutHistory">See all stomach logs</button>
+      ${gutDays()}
+      <p class="muted tiny">These are patterns, not a diagnosis. Food types are guessed from names unless you tag the food yourself. Talk to a dietitian or doctor about anything persistent.</p>`}
+    <div class="btn-row"><button class="btn soft grow" data-act="gutHistory">All stomach logs</button><button class="btn soft grow" data-act="report">📄 Share report</button></div>
+  </section>`;
+}
+
+// When episodes happen: time of day, how long after eating, what else was going on.
+function gutTiming(all) {
+  if (all.length < 3) return '';
+  const parts = [['Morning', 5, 12], ['Afternoon', 12, 17], ['Evening', 17, 22], ['Night', 22, 29]];
+  const part = h => parts.find(p => (h < 5 ? h + 24 : h) >= p[1] && (h < 5 ? h + 24 : h) < p[2])[0];
+  const pc = new Map();
+  all.forEach(e => { const k = part(+e.time.slice(0, 2)); pc.set(k, (pc.get(k) || 0) + 1); });
+  const [topPart, topN] = [...pc.entries()].sort((x, y) => y[1] - x[1])[0];
+  const ents = db.list('entries').map(x => toTs(x.date, x.time)).sort((a, b) => b - a);
+  const gaps = all.map(e => { const t = toTs(e.date, e.time), last = ents.find(x => x <= t); return last && t - last <= 12 * 3600e3 ? (t - last) / 3600e3 : null; }).filter(x => x != null);
+  const ctx = new Map();
+  all.forEach(e => (e.context || []).forEach(c => ctx.set(c, (ctx.get(c) || 0) + 1)));
+  const topCtx = [...ctx.entries()].filter(c => c[1] >= 2).sort((x, y) => y[1] - x[1]).slice(0, 4);
+  return `<div class="facts">
+    <div class="fact"><span>🕒</span><div>Most often in the <b>${topPart.toLowerCase()}</b> <span class="muted">(${topN} of ${all.length})</span></div></div>
+    ${gaps.length >= 3 ? `<div class="fact"><span>⏱️</span><div>Usually starts about <b>${hrsMin(median(gaps))}</b> after eating</div></div>` : ''}
+    ${topCtx.length ? `<div class="fact"><span>📝</span><div>Often logged with ${topCtx.map(c => `<b>${esc(c[0].toLowerCase())}</b> (${c[1]})`).join(', ')}</div></div>` : ''}
+  </div>`;
+}
+
+function gutDays() {
+  const bad = new Set(db.list('stomach').map(e => e.date));
+  const m = DAY_METRICS;
+  const diffs = compareDays(dayRows(), r => bad.has(r.date), [m.f, m.fiber, m.cal, m.water, m.sleep, m.lastMeal, m.recovery]).slice(0, 4);
+  return diffs.length ? `<h4>On days with stomach trouble</h4>${diffRows(diffs)}` : '';
+}
+
+function feelTrends(dates) {
+  const all = db.list('feel');
+  const inRange = all.filter(e => e.date >= dates[0]);
+  if (!all.length) return `<section class="card"><div class="card-head"><h3>😵‍💫 Feeling off</h3></div>
+    <p class="muted small">When you feel dizzy, drained or just off, log it from the Today screen. After a few check-ins this compares your off days with normal days to show what's different.</p></section>`;
+  const fc = new Map();
+  inRange.forEach(e => (e.feelings || []).forEach(f => fc.set(f, (fc.get(f) || 0) + 1)));
+  const offDates = new Set(all.map(e => e.date));
+  const m = DAY_METRICS;
+  const diffs = compareDays(dayRows(), r => offDates.has(r.date), [m.sleep, m.recovery, m.cal, m.c, m.p, m.water, m.strainPrev]).slice(0, 5);
+  const foods = analyzeGut(db.list('entries'), all, entryTags, { windowH: 6 });
+  // Skip staples eaten most days; they'd show up before almost anything.
+  const loggedDays = new Set(db.list('entries').map(e => e.date)).size;
+  const daysWith = key => new Set(db.list('entries').filter(e => e.kind + ':' + e.refId === key).map(e => e.date)).size;
+  foods.foods = foods.foods.filter(f => f.lift >= 1.5 && daysWith(f.key) < loggedDays * 0.6);
+  return `<section class="card gut-trends">
+    <div class="card-head"><h3>😵‍💫 Feeling off</h3></div>
+    <div class="big-stats"><div><b>${inRange.length}</b><span>check-ins this range</span></div><div><b>${new Set(inRange.map(e => e.date)).size}</b><span>days affected</span></div></div>
+    ${fc.size ? `<div class="chips">${[...fc.entries()].sort((x, y) => y[1] - x[1]).slice(0, 5).map(f => `<span class="chip sm">${feelEmoji(f[0])} ${esc(f[0])} · ${f[1]}</span>`).join('')}</div>` : ''}
+    ${offDates.size < 3 ? `<p class="muted small mt">Log at least 3 off days (and keep logging food and sleep) to see what's different about them.</p>`
+      : diffs.length ? `<h4>What's different on off days</h4>${diffRows(diffs)}`
+      : `<p class="small mt">No clear difference in sleep, food or recovery on off days yet.</p>`}
+    ${foods.episodes >= 3 && foods.foods.length ? `<h4>Often eaten in the 6h before</h4><div class="chips">${foods.foods.slice(0, 4).map(f => `<span class="chip sm warnchip">${esc(f.name)}</span>`).join('')}</div>` : ''}
+    <p class="muted tiny">Patterns, not a diagnosis. If it's frequent or severe, bring this to your athletic trainer or doctor.</p>
+    <button class="btn soft full" data-act="feelHistory">All check-ins</button>
   </section>`;
 }
 
@@ -505,6 +627,10 @@ const acts = {
   gut: () => openGut({ date: ui.date }),
   editGut: d => openGut({ ep: db.get('stomach', d.id) }),
   gutHistory: () => openGutHistory(),
+  feel: () => openFeel({ date: ui.date }),
+  editFeel: d => openFeel({ log: db.get('feel', d.id) }),
+  feelHistory: () => openFeelHistory(),
+  report: () => exportReport(),
   calendar: () => openCalendar(),
   newFood: () => openFoodForm({ onSaved: f => openFoodDetail(f.id) }),
   food: d => openFoodDetail(d.id),
@@ -672,9 +798,11 @@ function openAmount({ item, entry = null, meal, date, onAdded }) {
     quick.push([item.servingG, `${/^\d/.test(sl) ? '' : '1 '}${esc(sl)} · ${fmt(item.servingG)} g`]);
   }
   quick.push([100, '100 g']);
+  const sus = entry ? null : gutSuspects().get(item.kind + ':' + item.id);
   const s = openSheet({
     title: entry ? 'Edit entry' : 'How much?',
     body: `<div class="amt-food">${thumb(item.photo, item.kind === 'recipe' ? '🍲' : '🥣')}<div><div class="amt-name">${esc(item.name)}</div><div class="muted small">${esc(item.brand || '')}</div></div></div>
+      ${sus ? `<p class="tip">⚠️ Heads up: stomach trouble followed this ${sus.hit} of the ${sus.eaten} times you had it.</p>` : ''}
       <div class="amt-input"><input id="amt" type="text" inputmode="decimal" value="${fmtIn(startG)}" autocomplete="off" aria-label="Amount">
         <div class="seg unit">${`<button data-x="unit" data-u="g" class="on">grams</button>`}${item.servingG ? `<button data-x="unit" data-u="s">servings</button>` : ''}</div></div>
       <div class="chips">${quick.map(([g, l]) => `<button class="chip sm" data-x="q" data-g="${g}">${l}</button>`).join('')}</div>
@@ -816,7 +944,16 @@ function openFoodForm({ food = null, prefill = {}, onSaved } = {}) {
     } finally { btn.disabled = false; }
   }
   s.on('click', '[data-x="ocr"]', runOCR);
-  s.on('click', '[data-x="tag"]', el => { const t = el.dataset.t; tags.has(t) ? tags.delete(t) : tags.add(t); el.classList.toggle('on'); });
+  // New foods get tags guessed from the name until she taps a tag herself.
+  let tagsTouched = !!food;
+  function autoTags() {
+    if (tagsTouched) return;
+    tags = new Set(guessTags(s.$('#ff-name').value + ' ' + s.$('#ff-brand').value));
+    s.$$('[data-x="tag"]').forEach(b => b.classList.toggle('on', tags.has(b.dataset.t)));
+  }
+  s.on('input', '#ff-name, #ff-brand', autoTags);
+  autoTags();
+  s.on('click', '[data-x="tag"]', el => { tagsTouched = true; const t = el.dataset.t; tags.has(t) ? tags.delete(t) : tags.add(t); el.classList.toggle('on'); });
   s.on('click', '[data-x="del"]', async () => {
     if (!(await confirmSheet(`Delete “${esc(f.name)}”? Past log entries stay.`))) return;
     db.remove('foods', f.id); closeAllSheets(); toast('Food deleted');
@@ -1070,14 +1207,17 @@ function openBody(date) {
 function openGut({ ep = null, date = ui.date } = {}) {
   const e = ep ? { ...ep } : { id: uid(), date, time: date === dateStr() ? timeStr() : '12:00', severity: 3, symptoms: [], context: [], notes: '' };
   const sym = new Set(e.symptoms || []), ctx = new Set(e.context || []);
+  const one = (k, list, id) => `<div class="chips">${list.map(x => `<button class="chip sm ${e[k] === x ? 'on' : ''}" data-x="${id}" data-v="${x}">${x}</button>`).join('')}</div>`;
   const s = openSheet({
     title: ep ? 'Edit stomach log' : 'Stomach log', full: true, lock: true,
-    body: `<h4 class="sec">Severity</h4>
+    body: `<h4 class="sec">How bad?</h4>
       <div class="sev">${SEVERITY.map(x => `<button class="${e.severity === x.v ? 'on' : ''}" data-x="sev" data-v="${x.v}"><span>${x.e}</span>${x.t}</button>`).join('')}</div>
       <h4 class="sec">Symptoms</h4>
       <div class="chips">${SYMPTOMS.map(x => `<button class="chip sm ${sym.has(x) ? 'on' : ''}" data-x="sym" data-v="${x}">${x}</button>`).join('')}</div>
-      <div class="grid2 mt"><div class="field"><label>Date</label><input type="date" id="gd" value="${e.date}"></div><div class="field"><label>Time</label><input type="time" id="gt" value="${e.time}"></div></div>
-      <h4 class="sec">Context <span class="muted">(optional)</span></h4>
+      <h4 class="sec">Where <span class="muted">(optional)</span></h4>${one('where', WHERE, 'where')}
+      <h4 class="sec">How long <span class="muted">(optional)</span></h4>${one('duration', DURATION, 'dur')}
+      <div class="grid2 mt"><div class="field"><label>Date</label><input type="date" id="gd" value="${e.date}"></div><div class="field"><label>Started at</label><input type="time" id="gt" value="${e.time}"></div></div>
+      <h4 class="sec">Anything else going on? <span class="muted">(optional)</span></h4>
       <div class="chips">${CONTEXT.map(x => `<button class="chip sm ${ctx.has(x) ? 'on' : ''}" data-x="ctx" data-v="${x}">${x}</button>`).join('')}</div>
       <div class="field mt"><label>Notes</label><textarea id="gn" rows="3" placeholder="Possible cause, other notes">${esc(e.notes || '')}</textarea></div>
       <div id="recent"></div>
@@ -1087,8 +1227,19 @@ function openGut({ ep = null, date = ui.date } = {}) {
   function recent() {
     const t = toTs(s.$('#gd').value || e.date, s.$('#gt').value || e.time);
     const list = db.list('entries').map(x => ({ x, ts: toTs(x.date, x.time) })).filter(o => o.ts <= t && t - o.ts <= 12 * 3600e3).sort((a, b) => b.ts - a.ts);
-    s.$('#recent').innerHTML = list.length ? `<h4 class="sec">You ate in the 12 hours before</h4>${list.map(o => `<div class="kv-row"><span>${esc(o.x.name)}</span><span class="muted">${fmtTime(o.x.time)}${o.x.date !== (s.$('#gd').value || e.date) ? ' (prev day)' : ''}</span></div>`).join('')}` : '';
+    const sus = gutSuspects();
+    const flagged = list.filter(o => sus.has(o.x.kind + ':' + o.x.refId));
+    s.$('#recent').innerHTML = list.length ? `<h4 class="sec">You ate in the 12 hours before</h4>
+      ${flagged.length ? `<p class="tip">⚠️ ${flagged.map(o => `<b>${esc(o.x.name)}</b>`).join(', ')} ${flagged.length === 1 ? 'has' : 'have'} come before stomach trouble before.</p>` : ''}
+      ${list.map(o => `<div class="kv-row"><span>${sus.has(o.x.kind + ':' + o.x.refId) ? '⚠️ ' : ''}${esc(o.x.name)}${o.x.grams ? ` <span class="muted tiny">${fmt(o.x.grams)} g</span>` : ''}</span><span class="muted">${fmtTime(o.x.time)}${o.x.date !== (s.$('#gd').value || e.date) ? ' (prev day)' : ''}</span></div>`).join('')}`
+      : `<p class="muted small mt">No food logged in the 12 hours before this. Logging meals is what lets Pulse find triggers.</p>`;
   }
+  const pickOne = (id, k) => s.on('click', `[data-x="${id}"]`, el => {
+    e[k] = e[k] === el.dataset.v ? '' : el.dataset.v;
+    s.$$(`[data-x="${id}"]`).forEach(b => b.classList.toggle('on', b.dataset.v === e[k]));
+  });
+  pickOne('where', 'where');
+  pickOne('dur', 'duration');
   s.on('click', '[data-x="sev"]', el => { e.severity = +el.dataset.v; s.$$('[data-x="sev"]').forEach(b => b.classList.toggle('on', b === el)); });
   s.on('click', '[data-x="sym"]', el => { const v = el.dataset.v; sym.has(v) ? sym.delete(v) : sym.add(v); el.classList.toggle('on'); });
   s.on('click', '[data-x="ctx"]', el => { const v = el.dataset.v; ctx.has(v) ? ctx.delete(v) : ctx.add(v); el.classList.toggle('on'); });
@@ -1114,6 +1265,107 @@ function openGutHistory() {
   s.on('click', '[data-x="ep"]', el => { s.close(); openGut({ ep: db.get('stomach', el.dataset.id) }); });
 }
 
+// ---------- feeling off ----------
+// Looks at what was logged up to a moment and lists things that commonly make
+// people feel off, compared with her own usual numbers.
+function offSignals(date, time) {
+  const ts = toTs(date, time), out = [], H = 3600e3;
+  const ents = db.list('entries').map(x => ({ x, ts: toTs(x.date, x.time) })).filter(o => o.ts <= ts).sort((a, b) => b.ts - a.ts);
+  const hr = +time.slice(0, 2) + +time.slice(3, 5) / 60;
+  const day = db.get('days', date) || {}, prev = db.get('days', addDays(date, -1)) || {};
+  const past = Array.from({ length: 30 }, (_, i) => addDays(date, -i - 1));
+
+  // Food so far vs. what she usually has eaten by this time of day.
+  const soFar = sumMacros(ents.filter(o => o.x.date === date).map(o => o.x.macros));
+  const usual = past.map(d => db.list('entries').filter(e => e.date === d)).filter(l => l.length)
+    .map(l => sumMacros(l.filter(e => (e.time || '') <= time).map(e => e.macros)));
+  const avgBy = k => usual.length ? usual.reduce((s, t) => s + t[k], 0) / usual.length : 0;
+  const gap = ents.length ? (ts - ents[0].ts) / H : null;
+  if (gap != null && gap >= 4 && gap < 30) out.push({ e: '⏰', t: `Last ate <b>${hrsMin(gap)} ago</b>`, d: 'Long gaps without food can cause dizziness, shakiness and fog, especially around training.' });
+  else if (!soFar.cal && hr >= 10 && usual.length) out.push({ e: '🍽️', t: '<b>Nothing logged yet today</b>', d: 'If you haven\'t eaten, low fuel is a common cause.' });
+  if (usual.length >= 3 && avgBy('cal') > 300 && soFar.cal && soFar.cal < avgBy('cal') * 0.65)
+    out.push({ e: '🔥', t: `<b>${fmt(soFar.cal)} cal</b> so far, usually ~${fmt(avgBy('cal'))} by now`, d: 'Eating less than usual is a common reason for feeling drained.' });
+  else if (usual.length >= 3 && avgBy('c') > 50 && soFar.cal && soFar.c < avgBy('c') * 0.6)
+    out.push({ e: '🍞', t: `<b>${fmt(soFar.c)} g carbs</b> so far, usually ~${fmt(avgBy('c'))} g by now`, d: 'Carbs are the main fuel for practice. Low carbs often feel like heavy legs or fog.' });
+
+  // Water, only if she tracks it.
+  const tracksWater = past.slice(0, 14).some(d => db.get('days', d)?.water);
+  if (tracksWater && hr >= 11) {
+    const expect = goals().water * Math.min(1, Math.max(0, (hr - 7) / 15));
+    if ((day.water || 0) < expect * 0.5) out.push({ e: '💧', t: `Only <b>${fmt(day.water || 0)} oz</b> water so far`, d: 'Even mild dehydration can bring on headaches, dizziness and fatigue.' });
+  }
+
+  // Sleep and recovery against her own average.
+  const pastDays = past.map(d => db.get('days', d)).filter(Boolean);
+  const avgOf = k => { const v = pastDays.map(d => d[k]).filter(x => x != null); return v.length >= 3 ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const sAvg = avgOf('sleepMin');
+  if (day.sleepMin != null && (day.sleepMin < 390 || (sAvg && day.sleepMin < sAvg - 60)))
+    out.push({ e: '😴', t: `Slept <b>${fmtSleep(day.sleepMin)}</b>${sAvg ? ` (usual ${fmtSleep(sAvg)})` : ''}`, d: 'Short sleep is one of the most common reasons for feeling off.' });
+  const rAvg = avgOf('recovery');
+  if (day.recovery != null && (day.recovery < 34 || (rAvg && day.recovery < rAvg - 15)))
+    out.push({ e: '💚', t: `Recovery <b>${day.recovery}%</b>${rAvg ? ` (usual ${Math.round(rAvg)}%)` : ''}`, d: 'Your body is still catching up. That can come from training load, sleep, stress or getting sick.' });
+  const stAvg = avgOf('strain');
+  if (prev.strain != null && (prev.strain >= 16 || (stAvg && prev.strain > stAvg + 3)))
+    out.push({ e: '⚡', t: `Big day yesterday: strain <b>${prev.strain}</b>`, d: 'Hard sessions can leave you flat the next day, especially if you didn\'t refuel.' });
+  const yEnts = db.list('entries').filter(e => e.date === addDays(date, -1));
+  if (prev.burned && yEnts.length) {
+    const yc = sumMacros(yEnts.map(e => e.macros)).cal;
+    if (yc < prev.burned - 500) out.push({ e: '📉', t: `Yesterday: ate <b>${fmt(yc)}</b>, burned <b>${fmt(prev.burned)}</b>`, d: 'A big gap between eating and burning can show up the next day as low energy.' });
+  }
+  const gut = db.list('stomach').find(g => { const t = toTs(g.date, g.time); return t <= ts && ts - t <= 12 * H; });
+  if (gut) out.push({ e: '🫄', t: 'Had stomach trouble in the last 12 hours', d: 'Gut issues can leave you drained, especially if you ate less because of it.' });
+  return out;
+}
+
+function openFeel({ log = null, date = ui.date } = {}) {
+  const e = log ? { ...log } : { id: uid(), date, time: date === dateStr() ? timeStr() : '12:00', level: 2, feelings: [], context: [], notes: '' };
+  const fl = new Set(e.feelings || []), ctx = new Set(e.context || []);
+  const s = openSheet({
+    title: log ? 'Edit check-in' : 'Feeling off', full: true, lock: true,
+    body: `<h4 class="sec">How off?</h4>
+      <div class="sev">${OFF_LEVELS.map(x => `<button class="${e.level === x.v ? 'on' : ''}" data-x="lvl" data-v="${x.v}"><span>${x.e}</span>${x.t}</button>`).join('')}</div>
+      <h4 class="sec">What does it feel like? <span class="muted">(pick any)</span></h4>
+      <div class="chips">${FEELINGS.map(([em, x]) => `<button class="chip sm ${fl.has(x) ? 'on' : ''}" data-x="fl" data-v="${x}">${em} ${x}</button>`).join('')}</div>
+      <div class="grid2 mt"><div class="field"><label>Date</label><input type="date" id="fd" value="${e.date}"></div><div class="field"><label>Time</label><input type="time" id="ft" value="${e.time}"></div></div>
+      <div id="why"></div>
+      <h4 class="sec">Anything else going on? <span class="muted">(optional)</span></h4>
+      <div class="chips">${CONTEXT.map(x => `<button class="chip sm ${ctx.has(x) ? 'on' : ''}" data-x="ctx" data-v="${x}">${x}</button>`).join('')}</div>
+      <div class="field mt"><label>Notes</label><textarea id="fn" rows="3" placeholder="What were you doing? How long has it lasted?">${esc(e.notes || '')}</textarea></div>
+      ${log ? `<button class="btn ghost danger-t full" data-x="del">Delete</button>` : ''}`,
+    footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  function why() {
+    const sig = offSignals(s.$('#fd').value || e.date, s.$('#ft').value || e.time);
+    s.$('#why').innerHTML = `<div class="why-box"><h4>🔎 What might be behind it</h4>
+      ${sig.length ? sig.map(x => `<div class="why"><span class="why-ico">${x.e}</span><div><div>${x.t}</div><div class="muted tiny">${x.d}</div></div></div>`).join('')
+        : `<p class="small muted">Nothing stands out in what's logged. Logging food, sleep and recovery gives this more to go on, and after a few check-ins Trends compares your off days with normal ones.</p>`}
+      <p class="muted tiny">If it's severe, sudden, or keeps happening, tell your athletic trainer or a doctor.</p></div>`;
+  }
+  s.on('click', '[data-x="lvl"]', el => { e.level = +el.dataset.v; s.$$('[data-x="lvl"]').forEach(b => b.classList.toggle('on', b === el)); });
+  s.on('click', '[data-x="fl"]', el => { const v = el.dataset.v; fl.has(v) ? fl.delete(v) : fl.add(v); el.classList.toggle('on'); });
+  s.on('click', '[data-x="ctx"]', el => { const v = el.dataset.v; ctx.has(v) ? ctx.delete(v) : ctx.add(v); el.classList.toggle('on'); });
+  s.on('change', '#fd, #ft', why);
+  s.on('click', '[data-x="del"]', async () => { if (await confirmSheet('Delete this check-in?')) { db.remove('feel', e.id); closeAllSheets(); } });
+  s.on('click', '[data-x="save"]', () => {
+    Object.assign(e, { date: s.$('#fd').value || e.date, time: s.$('#ft').value || e.time, feelings: [...fl], context: [...ctx], notes: s.$('#fn').value.trim() });
+    db.put('feel', e);
+    s.close();
+    toast(log ? 'Saved' : 'Logged');
+  });
+  why();
+}
+
+function openFeelHistory() {
+  const all = db.list('feel').sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time));
+  const s = openSheet({
+    title: 'Feeling-off log', full: true,
+    body: all.length ? all.map(e => { const l = OFF_LEVELS[e.level - 1] || OFF_LEVELS[1]; return `<button class="row" data-x="ep" data-id="${e.id}"><span class="thumb ph">${l.e}</span>
+      <div class="row-main"><div class="row-name">${fmtDay(e.date)} · ${fmtTime(e.time)}</div><div class="row-sub">${l.t}${(e.feelings || []).length ? ' · ' + esc(e.feelings.join(', ')) : ''}${e.notes ? ' · ' + esc(e.notes) : ''}</div></div><span class="chev">›</span></button>`; }).join('')
+      : `<p class="muted center">Nothing logged yet.</p>`,
+  });
+  s.on('click', '[data-x="ep"]', el => { s.close(); openFeel({ log: db.get('feel', el.dataset.id) }); });
+}
+
 // ---------- calendar ----------
 function openCalendar() {
   let month = ui.date.slice(0, 7);
@@ -1122,7 +1374,7 @@ function openCalendar() {
     body: `<div class="cal-nav"><button class="icon-btn" data-x="prev" aria-label="Previous month">‹</button><b id="calTitle"></b><button class="icon-btn" data-x="next" aria-label="Next month">›</button></div>
       <div class="cal-grid cal-wd">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(d => `<span>${d}</span>`).join('')}</div>
       <div class="cal-grid" id="calGrid"></div>
-      <div class="cal-legend"><span><i class="lg on"></i>On target</span><span><i class="lg under"></i>Under</span><span><i class="lg over"></i>Over</span><span><i class="mk gut"></i>Symptoms</span><span><i class="mk sleep"></i>Recovery logged</span></div>
+      <div class="cal-legend"><span><i class="lg on"></i>On target</span><span><i class="lg under"></i>Under</span><span><i class="lg over"></i>Over</span><span><i class="mk gut"></i>Stomach</span><span><i class="mk feel"></i>Felt off</span><span><i class="mk sleep"></i>Recovery logged</span></div>
       <div id="calSum"></div>`,
   });
   function draw() {
@@ -1133,6 +1385,7 @@ function openCalendar() {
     db.list('entries').forEach(e => { if (e.date.startsWith(month)) (by[e.date] ||= []).push(e.macros); });
     const eps = {};
     db.list('stomach').forEach(e => { if (e.date.startsWith(month)) eps[e.date] = (eps[e.date] || 0) + 1; });
+    const offs = new Set(db.list('feel').map(e => e.date));
     let cells = '<span></span>'.repeat(first.getDay());
     const logged = [];
     for (let d = 1; d <= nDays; d++) {
@@ -1144,7 +1397,7 @@ function openCalendar() {
       const cls = !t ? '' : r < 0.9 ? 'under' : r > 1.1 ? 'over' : 'on';
       cells += `<button class="cal-day ${cls} ${ds === today ? 'today' : ''} ${ds === ui.date ? 'sel' : ''} ${ds > today ? 'future' : ''}" data-x="day" data-d="${ds}">
         <span class="cal-n">${d}</span><span class="cal-c">${t ? (t.cal >= 1000 ? (t.cal / 1000).toFixed(1) + 'k' : Math.round(t.cal)) : ''}</span>
-        <span class="cal-mk">${eps[ds] ? '<i class="mk gut"></i>' : ''}${day && (day.sleepMin != null || day.recovery != null) ? '<i class="mk sleep"></i>' : ''}</span></button>`;
+        <span class="cal-mk">${eps[ds] ? '<i class="mk gut"></i>' : ''}${offs.has(ds) ? '<i class="mk feel"></i>' : ''}${day && (day.sleepMin != null || day.recovery != null) ? '<i class="mk sleep"></i>' : ''}</span></button>`;
     }
     s.$('#calGrid').innerHTML = cells;
     const avg = k => logged.length ? logged.reduce((a, t) => a + t[k], 0) / logged.length : 0;
@@ -1191,14 +1444,41 @@ function exportDaysCSV() {
   const by = {};
   db.list('entries').forEach(e => (by[e.date] ||= []).push(e.macros));
   const dates = new Set([...Object.keys(by), ...db.list('days').map(d => d.id), ...db.list('stomach').map(s => s.date)]);
-  const rows = [['date', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'fiber_g', 'water_oz', 'sleep_hours', 'sleep_perf_pct', 'recovery_pct', 'strain', 'hrv', 'resting_hr', 'calories_burned', 'steps', 'weight_lb', 'energy', 'stomach_episodes', 'journal']];
+  const rows = [['date', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'fiber_g', 'water_oz', 'sleep_hours', 'sleep_perf_pct', 'recovery_pct', 'strain', 'hrv', 'resting_hr', 'calories_burned', 'steps', 'weight_lb', 'energy', 'stomach_episodes', 'felt_off', 'journal']];
   [...dates].sort().forEach(d => {
     const t = by[d] ? sumMacros(by[d]) : null, x = db.get('days', d) || {};
     const r1 = v => v == null ? '' : Math.round(v * 10) / 10;
     rows.push([d, t && Math.round(t.cal), t && r1(t.p), t && r1(t.c), t && r1(t.f), t && r1(t.fiber), x.water, x.sleepMin != null ? r1(x.sleepMin / 60) : '',
-      x.sleepPerf, x.recovery, x.strain, x.hrv, x.rhr, x.burned, x.steps, x.weight, x.energy, db.list('stomach').filter(s => s.date === d).length, x.notes]);
+      x.sleepPerf, x.recovery, x.strain, x.hrv, x.rhr, x.burned, x.steps, x.weight, x.energy, db.list('stomach').filter(s => s.date === d).length, db.list('feel').filter(s => s.date === d).length, x.notes]);
   });
   shareFile(`pulse-daily-${dateStr()}.csv`, toCSV(rows), 'text/csv');
+}
+
+// Plain-text summary of the last 60 days of stomach and feeling-off logs,
+// meant for an athletic trainer, dietitian or doctor.
+function exportReport() {
+  const since = addDays(dateStr(), -59);
+  const st = db.list('stomach').filter(e => e.date >= since).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+  const fe = db.list('feel').filter(e => e.date >= since).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+  const a = analyzeGut(db.list('entries'), db.list('stomach'), entryTags, { windowH: 12 });
+  const name = profile()?.name ? ` for ${profile().name}` : '';
+  const L = [`Pulse symptom report${name}`, `${fmtDay(since)} – ${fmtDay(dateStr())}`, ''];
+  L.push(`STOMACH: ${st.length} episodes on ${new Set(st.map(e => e.date)).size} days`);
+  if (a.episodes >= 3 && a.foods.length) L.push('Foods most often eaten in the 12h before (vs. usual rate ' + Math.round(a.base * 100) + '%):',
+    ...a.foods.map(f => `  - ${f.name}: trouble after ${f.hit} of ${f.eaten} times (${Math.round(f.rate * 100)}%)`));
+  if (a.episodes >= 3 && a.tags.length) L.push('Food types: ' + a.tags.map(t => `${t.name} ${Math.round(t.rate * 100)}%`).join(', '));
+  L.push('', ...st.map(e => {
+    const sv = SEVERITY[e.severity - 1] || SEVERITY[2];
+    const before = db.list('entries').filter(x => { const t = toTs(e.date, e.time) - toTs(x.date, x.time); return t >= 0 && t <= 12 * 3600e3; }).map(x => x.name);
+    return `${e.date} ${e.time}  ${sv.t} (${e.severity}/5)${(e.symptoms || []).length ? ' · ' + e.symptoms.join(', ') : ''}${e.where ? ' · ' + e.where : ''}${e.duration ? ' · ' + e.duration : ''}`
+      + `${(e.context || []).length ? '\n    Context: ' + e.context.join(', ') : ''}${before.length ? '\n    Ate in 12h before: ' + before.join(', ') : ''}${e.notes ? '\n    Notes: ' + e.notes : ''}`;
+  }));
+  L.push('', `FEELING OFF: ${fe.length} check-ins on ${new Set(fe.map(e => e.date)).size} days`, ...fe.map(e => {
+    const l = OFF_LEVELS[e.level - 1] || OFF_LEVELS[1];
+    return `${e.date} ${e.time}  ${l.t} (${e.level}/5)${(e.feelings || []).length ? ' · ' + e.feelings.join(', ') : ''}${(e.context || []).length ? '\n    Context: ' + e.context.join(', ') : ''}${e.notes ? '\n    Notes: ' + e.notes : ''}`;
+  }));
+  L.push('', 'Patterns are from self-logged data and are not a diagnosis.');
+  shareFile(`pulse-report-${dateStr()}.txt`, L.join('\n'), 'text/plain');
 }
 function exportFoodCSV() {
   const rows = [['date', 'time', 'meal', 'food', 'brand', 'grams', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'fiber_g']];
