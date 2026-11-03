@@ -322,7 +322,7 @@ function gutCard(date) {
     ${eps.map(e => { const s = SEVERITY[e.severity - 1] || SEVERITY[2]; return `<button class="entry" data-act="editGut" data-id="${e.id}">
       <div class="e-main"><div class="e-name">${s.e} ${s.t} · ${fmtTime(e.time)}</div><div class="e-sub">${esc((e.symptoms || []).join(', ') || 'No symptoms picked')}</div></div><div class="chev">›</div></button>`; }).join('')}
     <button class="gut-btn" data-act="gut">Log stomach symptoms</button>
-    ${!eps.length ? `<p class="muted small center">Log symptoms when they happen. Over time, Trends flags foods that often come before them.</p>` : ''}
+    ${!eps.length ? `<p class="muted small center">Log it when your stomach hurts. After a few logs, Trends shows which foods might be causing it.</p>` : ''}
   </section>`;
 }
 
@@ -333,7 +333,7 @@ function feelCard(date) {
     ${logs.map(e => { const l = OFF_LEVELS[e.level - 1] || OFF_LEVELS[1]; return `<button class="entry" data-act="editFeel" data-id="${e.id}">
       <div class="e-main"><div class="e-name">${l.e} ${l.t} · ${fmtTime(e.time)}</div><div class="e-sub">${esc((e.feelings || []).join(', ') || 'Just off')}</div></div><div class="chev">›</div></button>`; }).join('')}
     <button class="feel-btn" data-act="feel">Feeling off? Log it</button>
-    ${!logs.length ? `<p class="muted small center">Dizzy, drained, foggy, shaky… log it and Pulse checks your sleep, food and recovery for likely reasons.</p>` : ''}
+    ${!logs.length ? `<p class="muted small center">Not feeling right? Log it and see what might be causing it.</p>` : ''}
   </section>`;
 }
 
