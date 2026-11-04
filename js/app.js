@@ -48,6 +48,8 @@ const OFF_LEVELS = [
 const DEFAULT_GOALS = { cal: 2400, p: 140, c: 300, f: 75, fiber: 30, water: 100 };
 // This copy of Pulse is set up for Carly. Set to null to go back to asking each person.
 const OWNER = { name: 'Carly', number: '11', glutenFree: true };
+// ?demo opens a separate copy filled with sample data (see demo.js).
+const DEMO = new URLSearchParams(location.search).has('demo');
 
 const profile = () => db.get('settings', 'profile');
 const goals = () => ({ ...DEFAULT_GOALS, ...(profile()?.goals || {}) });
@@ -599,11 +601,12 @@ const NOTIFS = [
   ['n_bed', '🌙 Bedtime', '30 minutes before your bedtime goal.', true],
   ['n_game', '🏀 Game days', 'The morning of each game, with who you play and when.', true],
   ['n_prep', '🥡 Meal prep', "Once, when you're down to your last container.", true],
-  ['n_meds', '💊 Meds & vitamins', "8 AM, skipped if you've already checked them off.", false],
+  ['n_meds', '💊 Meds reminder', "Only if you haven't checked them off by the time you pick below.", true],
   ['n_period', '🌸 Period heads-up', 'The evening before it might start. The lock screen just says "Heads-up".', false],
 ];
 const hmMinus = (t, m) => { const x = +t.slice(0, 2) * 60 + +t.slice(3) - m; return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
-const nOn = k =>profile()?.[k] ?? NOTIFS.find(n => n[0] === k)[3];
+const medsTime = () => profile()?.medsTime || '09:00';
+const nOn = k => profile()?.[k] ?? NOTIFS.find(n => n[0] === k)[3];
 function notifyItems() {
   const t = dateStr(), items = [];
   if (nOn('n_wish')) items.push({ id: 'wish', at: '11:11', ttl: 60, close: 60, title: '11:11', body: 'Make a wish ✨' });
@@ -612,8 +615,10 @@ function notifyItems() {
     items.push({ id: 'game-' + g.date, date: g.date, at: g.time && g.time < '12:00' ? hmMinus(g.time, 180) : '09:00', ttl: 10800, title: '🏀 Game day', body: `${vsAt(g)} ${g.opp} · ${gameTime(g)}` }));
   const meds = medList();
   if (nOn('n_meds') && meds.length) {
-    const taken = db.get('days', t)?.meds || {};
-    items.push({ id: 'meds', at: '08:00', ttl: 7200, skip: meds.every(m => taken[m.id]) ? [t] : [], title: '💊 Meds & vitamins', body: "You haven't checked them off yet today." });
+    // A daytime reminder ignores night meds; she hasn't taken those yet.
+    const at = medsTime(), taken = db.get('days', t)?.meds || {};
+    const due = at < '17:00' && meds.some(m => m.when !== 'Night') ? meds.filter(m => m.when !== 'Night') : meds;
+    items.push({ id: 'meds', at, ttl: 7200, skip: due.every(m => taken[m.id]) ? [t] : [], title: '💊 Meds & vitamins', body: "Haven't checked them off yet today." });
   }
   const preps = activePreps(), left = preps.reduce((a, p) => a + p.left, 0);
   if (nOn('n_prep') && left > 0 && left <= 1) {
@@ -633,10 +638,12 @@ function notifyItems() {
 }
 let notifyTimer;
 function scheduleNotify(ms = 1500) {
+  if (DEMO) return;
   clearTimeout(notifyTimer);
   notifyTimer = setTimeout(() => notify.saveSchedule(notifyItems()).catch(() => {}), ms);
 }
 async function turnOnNotify() {
+  if (DEMO) return toast("This is the sample version. Notifications are off here.");
   try { await notify.turnOn(); ui.notifyOn = true; toast('🔔 Notifications on'); scheduleNotify(0); queueRender(); }
   catch (e) { toast(e.message); }
 }
@@ -648,8 +655,12 @@ function notifyCard() {
     <h3>🔔 Notifications</h3>
     <p class="muted small">${intro}</p>
     ${ui.notifyOn ? '' : `<button class="btn primary full" data-act="notifyOn">Turn on notifications</button>`}
-    ${NOTIFS.filter(n => n[0] !== 'n_period' || periodOn()).map(([k, l, sub, def]) => switchRow(k, l, sub, def)).join('')}
+    ${NOTIFS.filter(n => n[0] !== 'n_period' || periodOn()).map(([k, l, sub, def]) => switchRow(k, l, sub, def) + (k === 'n_meds' && nOn('n_meds') ? medsTimeRow() : '')).join('')}
   </section>`;
+}
+function medsTimeRow() {
+  if (!medList().length) return `<button class="btn soft full mb" data-act="editMeds">💊 Add your meds first</button>`;
+  return `<div class="kv-row"><span>⏰ Remind me at<div class="muted tiny">Skipped on days you've already checked them off</div></span><input type="time" class="time-in" value="${medsTime()}" data-change="medsTime" aria-label="Meds reminder time"></div>`;
 }
 // If the app is open at 11:11 AM, a small note shows for that minute only.
 function wishCheck() {
@@ -1229,6 +1240,7 @@ const changes = {
   goal: el => { const g = goals(); g[el.dataset.k] = num(el.value); saveProfile({ goals: g }); },
   name: el => saveProfile({ name: el.value.trim() }),
   bedGoal: el => { if (el.value) saveProfile({ bedGoal: el.value }); },
+  medsTime: el => { if (el.value) saveProfile({ medsTime: el.value }); },
   restore: el => restoreBackup(el.files[0]),
 };
 const outsideSheet = el => !el.closest('.sheet-wrap');
@@ -2240,6 +2252,7 @@ function startApp({ first = false } = {}) {
   appEl.classList.add('ready');
   render();
   splash(first);
+  if (DEMO) document.body.insertAdjacentHTML('beforeend', '<div class="demo-tag">Sample data</div>');
   navigator.storage?.persist?.();
   notify.clearStale();
   notify.isOn().then(on => { ui.notifyOn = on; if (ui.tab === 'me') queueRender(); });
@@ -2296,7 +2309,13 @@ window.addEventListener('online', () => sync.schedule(100));
 async function boot() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   try {
-    if (sync.enabled) {
+    if (DEMO) {
+      // Fresh sample data each day so "today" always looks lived-in.
+      const day = localStorage.getItem('pulseDemoDay');
+      if (day !== dateStr()) await new Promise(r => { const q = indexedDB.deleteDatabase('pulse-demo'); q.onsuccess = q.onerror = q.onblocked = r; });
+      await db.init('demo');
+      if (!profile()) { await (await import('./demo.js')).seedDemo(); localStorage.setItem('pulseDemoDay', dateStr()); }
+    } else if (sync.enabled) {
       const user = await sync.getUser(askNewPassword);
       if (!user) return showAuth();
       await db.init(user.id);

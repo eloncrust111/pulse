@@ -1,4 +1,4 @@
 push/vapid-private.txt
 push/.wrangler/
 push/node_modules/
-demo/
+push/package-lock.json
