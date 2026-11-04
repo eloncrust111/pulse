@@ -316,6 +316,7 @@ function screenToday() {
     </div>
     <div class="mbs">${macroBar('Protein', 'p', t.p, g.p)}${macroBar('Carbs', 'c', t.c, g.c)}${macroBar('Fat', 'f', t.f, g.f)}</div>
   </section>
+  ${winCard(d)}
   ${gameBanner(d)}
   ${activityRow(d, day)}
   ${gfPrompt()}
@@ -330,6 +331,36 @@ function screenToday() {
   ${journalCard(day)}
   ${periodRow(d, day)}
   <div class="spacer"></div>`;
+}
+
+// ---------- game results ----------
+// The push server watches the Pilots' feed; results fill in the schedule.
+function applyResults(res) {
+  Object.entries(res || {}).forEach(([d, r]) => { const g = GAMES.find(x => x.date === d); if (g) g.result = `${r.r} ${r.us}-${r.them}`; });
+}
+try { applyResults(JSON.parse(localStorage.getItem('pulseResults') || '{}')); } catch {}
+async function refreshResults() {
+  try {
+    const res = await notify.fetchResults();
+    if (!res) return;
+    const before = JSON.stringify(GAMES.map(g => g.result));
+    applyResults(res);
+    try { localStorage.setItem('pulseResults', JSON.stringify(res)); } catch {}
+    if (JSON.stringify(GAMES.map(g => g.result)) !== before) queueRender();
+  } catch {}
+}
+const winSeen = () => { try { return JSON.parse(localStorage.getItem('pulseWinSeen') || '[]'); } catch { return []; } };
+// A win on this day or the day before, until she closes it.
+function recentWin(date) {
+  return [gameOn(date), gameOn(addDays(date, -1))].find(g => g?.result?.startsWith('W') && !winSeen().includes(g.date));
+}
+function winCard(date) {
+  const g = recentWin(date);
+  if (!g) return '';
+  return `<section class="card win-card"><button class="pr-x" data-act="winDone" data-d="${g.date}" aria-label="Close">✕</button>
+    <div class="win-big">🏆</div><div class="win-t">Pilots win!</div>
+    <div class="win-s">${vsAt(g)} ${esc(g.opp)} · ${esc(g.result)}</div>
+    <div class="muted small">Congrats, ${esc(firstName())} 🎉</div></section>`;
 }
 
 // ---------- games & training days ----------
@@ -611,7 +642,10 @@ function openMeds() {
 // ---------- period ----------
 // Kept low-key: one slim row on Today. Period days line up with stomach and
 // feeling-off logs so cycle symptoms don't get blamed on food.
-const FLOWS = [['spotting', 'Spotting'], ['light', 'Light'], ['medium', 'Medium'], ['heavy', 'Heavy']];
+// No flow levels: with an IUD there may be little or no bleeding, but the cycle
+// still shows up in how she feels.
+const PERIOD_FEELS = [['cramps', '😣', 'Cramps'], ['moody', '😤', 'Moody'], ['emotional', '🥺', 'Emotional'], ['bloated', '🎈', 'Bloated'],
+  ['tired', '🥱', 'Tired'], ['cravings', '🍫', 'Cravings'], ['headache', '🤕', 'Headache']];
 const periodOn = () => profile()?.showPeriod !== false;
 const periodDays = () => db.list('days').filter(d => d.period).map(d => d.id).sort();
 const daysBetween = (a, b) => Math.round((parseDate(b) - parseDate(a)) / 864e5);
@@ -643,14 +677,22 @@ function periodRow(date, day) {
   if (!periodOn()) return '';
   const c = cycleInfo(date);
   if (day.period) return `<section class="period-row on"><div class="pr-top"><span>🌸 Period${c.day ? ` · day ${c.day}` : ''}</span><button class="pr-x" data-act="period" data-f="" aria-label="Remove">✕</button></div>
-    <div class="pr-flow">${FLOWS.map(([k, l]) => `<button class="chip sm ${day.period === k ? 'on' : ''}" data-act="period" data-f="${k}">${l}</button>`).join('')}</div></section>`;
+    <div class="muted tiny pr-q">How's it hitting you today?</div>
+    <div class="pr-flow">${PERIOD_FEELS.map(([k, e, l]) => `<button class="chip sm ${(day.periodFeel || []).includes(k) ? 'on' : ''}" data-act="periodFeel" data-k="${k}">${e} ${l}</button>`).join('')}</div></section>`;
   const soon = c.next && date >= dateStr() ? daysBetween(date, c.next) : null;
   const hint = soon != null && soon >= 0 && soon <= 4 ? (soon === 0 ? 'may start today' : `may start in ~${soon} day${soon === 1 ? '' : 's'}`) : c.day && c.day <= 60 ? `cycle day ${c.day}` : '';
-  return `<button class="period-row" data-act="period" data-f="medium"><span>🌸 Period</span><span class="muted small grow">${hint}</span><span class="link">Log</span></button>`;
+  return `<button class="period-row" data-act="period" data-f="on"><span>🌸 Period</span><span class="muted small grow">${hint}</span><span class="link">Log</span></button>`;
 }
 function setPeriod(f) {
   const d = { ...(db.get('days', ui.date) || { id: ui.date, date: ui.date }) };
-  if (f) d.period = f; else delete d.period;
+  if (f) d.period = true; else { delete d.period; delete d.periodFeel; }
+  db.put('days', d);
+}
+function togglePeriodFeel(k) {
+  const d = { ...(db.get('days', ui.date) || { id: ui.date, date: ui.date }) };
+  const on = new Set(d.periodFeel || []);
+  on.has(k) ? on.delete(k) : on.add(k);
+  d.periodFeel = [...on];
   db.put('days', d);
 }
 // "3 of 7 stomach logs were during or right before your period"
@@ -663,7 +705,9 @@ function cycleTrends() {
   if (!periodOn()) return '';
   const c = cycleInfo();
   if (!c.starts.length) return '';
-  const since = c.last ? daysBetween(c.last, dateStr()) : null;
+  const fc = new Map();
+  db.list('days').forEach(d => (d.periodFeel || []).forEach(k => fc.set(k, (fc.get(k) || 0) + 1)));
+  const feelTop = [...fc.entries()].filter(([k]) => PERIOD_FEELS.some(f => f[0] === k)).sort((a, b) => b[1] - a[1]).slice(0, 3);
   const short = d => parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   return `<section class="card gut-trends">
     <div class="card-head"><h3>🌸 Cycle</h3></div>
@@ -674,7 +718,7 @@ function cycleTrends() {
       ${periodShare(db.list('feel'), 'feeling-off check-ins')}
     </div>
     ${!c.avg ? `<p class="muted small">Log a couple of periods and this will show your usual cycle length.</p>` : ''}
-    ${since > 40 && since < 120 ? `<p class="muted small">It's been ${since} days since your last logged period. If you just forgot to log it, ignore this. If it's late for you, it's worth mentioning to your dietitian or trainer, since training hard without enough fuel can delay it.</p>` : ''}
+    ${feelTop.length ? `<p class="small">Usually: ${feelTop.map(([k, n]) => { const f = PERIOD_FEELS.find(x => x[0] === k); return `<b>${f[1]} ${f[2].toLowerCase()}</b> (${n})`; }).join(', ')}</p>` : ''}
   </section>`;
 }
 
@@ -682,6 +726,7 @@ function cycleTrends() {
 // A short list on purpose: at most a few a day, nothing after bedtime.
 const NOTIFS = [
   ['n_bed', '🌙 Bedtime', "30 minutes before that night's planned bedtime.", true],
+  ['n_win', '🏆 Wins', 'A congrats right after the Pilots win.', true],
   ['n_game', '🏀 Game days', 'The morning of each game, with who you play and when.', true],
   ['n_prep', '🥡 Meal prep', "Once, when you're down to your last container.", true],
   ['n_meds', '💊 Meds reminder', "Only if they're not checked off yet.", true],
@@ -727,7 +772,7 @@ let notifyTimer;
 function scheduleNotify(ms = 1500) {
   if (DEMO) return;
   clearTimeout(notifyTimer);
-  notifyTimer = setTimeout(() => notify.saveSchedule(notifyItems()).catch(() => {}), ms);
+  notifyTimer = setTimeout(() => notify.saveSchedule(notifyItems(), { wins: nOn('n_win') }).catch(() => {}), ms);
 }
 async function turnOnNotify() {
   if (DEMO) return toast("This is the sample version. Notifications are off here.");
@@ -1256,7 +1301,7 @@ function screenMe() {
     <section class="card profile">
       <div class="avatar">${esc(firstName()[0]?.toUpperCase() || '?')}</div>
       <div class="grow"><input class="name-in" value="${esc(p.name || '')}" placeholder="Your name" data-change="name" aria-label="Your name">
-      <div class="muted small">${cloud ? esc(cloud.email) : 'Saved on this phone'}</div></div>
+      <div class="muted small">${cloud ? esc(cloud.email) : '🔒 Private. Everything stays on this phone.'}</div></div>
     </section>
 
     <section class="card">
@@ -1350,6 +1395,8 @@ const acts = {
   healthGuide: () => openHealthGuide(),
   toggle: d => saveProfile({ [d.k]: !(profile()?.[d.k] ?? d.def === '1') }),
   period: d => setPeriod(d.f),
+  periodFeel: d => togglePeriodFeel(d.k),
+  winDone: d => { try { localStorage.setItem('pulseWinSeen', JSON.stringify([...winSeen(), d.d])); } catch {} queueRender(); },
   notifyOn: () => turnOnNotify(),
   eatPrep: d => eatPrep(d.id),
   editPrep: d => openPrep({ prep: db.get('preps', d.id) }),
@@ -2381,6 +2428,7 @@ function startApp({ first = false } = {}) {
   navigator.storage?.persist?.();
   notify.clearStale();
   notify.isOn().then(on => { ui.notifyOn = on; if (ui.tab === 'me') queueRender(); });
+  refreshResults();
   scheduleNotify();
 }
 
@@ -2392,6 +2440,7 @@ function splash(first) {
   const now = timeStr(), num = profile()?.number, gm = gameOn(t);
   const note = first ? 'Tap ＋ to log your first meal'
     : now === '11:11' ? "✨ It's 11:11. Make a wish"
+    : recentWin(t) ? `🏆 Congrats on the win ${vsAt(recentWin(t))} ${esc(recentWin(t).opp)}!`
     : gm ? `🏀 Game day ${vsAt(gm)} ${esc(gm.opp)} · ${gameTime(gm)}`
     : n >= 2 ? `🔥 ${n} days logged in a row`
     : preps >= 1 ? `🥡 ${fmt(preps)} meal-prep container${preps === 1 ? '' : 's'} ready`
@@ -2427,6 +2476,7 @@ document.addEventListener('visibilitychange', () => {
   notify.clearStale();
   scheduleNotify();
   wishCheck();
+  refreshResults();
   sync.schedule(100);
 });
 window.addEventListener('online', () => sync.schedule(100));

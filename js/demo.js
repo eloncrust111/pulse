@@ -76,7 +76,6 @@ export async function seedDemo() {
 
   const games = new Set((await import('./games.js')).GAMES.map(g => g.date));
   const period = new Set([...[0, 1, 2, 3, 4].map(i => addDays(today, -56 + i)), ...[0, 1, 2, 3, 4].map(i => addDays(today, -28 + i)), addDays(today, -1), today]);
-  const flows = ['medium', 'heavy', 'heavy', 'light', 'spotting'];
   const meds = [{ id: 'm1', name: 'Vitamin D3', when: 'Morning' }, { id: 'm2', name: 'Multivitamin', when: 'Morning' }, { id: 'm3', name: 'Iron', when: 'Morning', food: true }, { id: 'm4', name: 'Magnesium', when: 'Night', food: true }];
   const notes = ['Legs felt heavy at practice but shooting was good.', 'Lift was hard. PR on trap bar deadlift though.', 'Slept great, felt fast today.',
     'Stomach was off after lunch. Not sure why.', 'Film + recovery day. Iced after.', 'Coach said my defense looked better.', 'Tired. Need to get to bed on time tonight.'];
@@ -121,10 +120,10 @@ export async function seedDemo() {
     meds.forEach(m => { if (rnd() < (isToday ? (m.when === 'Night' ? 0 : 1) : 0.88)) taken[m.id] = m.when === 'Night' ? '20:40' : '06:30'; });
     day.meds = taken;
     if (rnd() < 0.3 && !isToday) day.notes = pick(notes);
-    if (period.has(d)) { let i = 0; while (period.has(addDays(d, -i - 1))) i++; day.period = flows[Math.min(i, 4)]; }
+    if (period.has(d)) { day.period = true; day.periodFeel = [pick(['moody', 'cramps', 'tired']), pick(['bloated', 'cravings', 'emotional', 'moody'])]; }
     db.put('days', day);
   }
-  [0, 1, 2, 3, 4].forEach(i => { const d = addDays(today, -56 + i); db.put('days', { id: d, date: d, period: flows[i] }); });
+  [0, 1, 2, 3, 4].forEach(i => { const d = addDays(today, -56 + i); db.put('days', { id: d, date: d, period: true }); });
   preps.forEach(p => { p.left = Math.max(0, p.containers - (p.eaten || 0)); delete p._r; delete p.eaten; db.put('preps', p); });
   preps.slice(0, -1).forEach(p => { p.left = 0; db.put('preps', p); });
   const latest = preps[preps.length - 1];

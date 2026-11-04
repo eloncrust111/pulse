@@ -33,15 +33,15 @@ export async function isOn() {
 }
 
 // items: [{ id, at: 'HH:MM', date?: 'YYYY-MM-DD', skip?: [dates], ttl, title, body, close? }]
-export async function saveSchedule(items) {
+export async function saveSchedule(items, { wins = true } = {}) {
   try {
     const c = await caches.open(CACHE);
-    await c.put(FILE, new Response(JSON.stringify({ items, saved: Date.now() }), { headers: { 'Content-Type': 'application/json' } }));
+    await c.put(FILE, new Response(JSON.stringify({ items, wins, pushUrl: CONFIG.PUSH_URL, saved: Date.now() }), { headers: { 'Content-Type': 'application/json' } }));
   } catch { /* private mode */ }
   if (!pushReady() || !(await isOn())) return;
   const sub = await subscription(false);
   const times = items.map(({ id, at, date, skip, ttl }) => ({ id, at, date, skip, ttl }));
-  const body = JSON.stringify({ sub, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, items: times });
+  const body = JSON.stringify({ sub, tz: Intl.DateTimeFormat().resolvedOptions().timeZone, items: times, wins });
   // Only re-send when something changed, or once a day so the server never goes stale.
   let last = {};
   try { last = JSON.parse(localStorage.getItem('pulseNotifySent') || '{}'); } catch {}
@@ -56,4 +56,11 @@ export async function clearStale() {
     const reg = await navigator.serviceWorker?.getRegistration();
     (await reg?.getNotifications({ tag: 'wish' }) || []).forEach(n => { if (Date.now() - (n.timestamp || 0) > 60e3) n.close(); });
   } catch {}
+}
+
+// Game results, read from the push server (it checks the Pilots' feed).
+export async function fetchResults() {
+  if (!CONFIG.PUSH_URL) return null;
+  const r = await fetch(CONFIG.PUSH_URL.replace(/\/$/, '') + '/results');
+  return r.ok ? r.json() : null;
 }

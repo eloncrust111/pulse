@@ -16,6 +16,7 @@ export default {
   async fetch(req, env) {
     if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
     const url = new URL(req.url);
+    if (url.pathname === '/results') return json(JSON.parse(await env.SUBS.get('results') || '{}'));
     if (url.pathname !== '/sub') return json({ ok: true, name: 'pulse-push' });
     let body;
     try { body = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
@@ -26,7 +27,7 @@ export default {
     let subs = (await loadSubs(env)).filter(s => s.endpoint !== endpoint);
     if (req.method === 'POST') {
       const items = (Array.isArray(body.items) ? body.items : []).slice(0, 80).map(cleanItem).filter(Boolean);
-      subs.unshift({ endpoint, tz: String(body.tz || 'America/Los_Angeles').slice(0, 60), items, seen: Date.now() });
+      subs.unshift({ endpoint, tz: String(body.tz || 'America/Los_Angeles').slice(0, 60), items, wins: body.wins !== false, seen: Date.now() });
       subs = subs.slice(0, MAX_SUBS);
     }
     await saveSubs(env, subs);
@@ -34,7 +35,9 @@ export default {
   },
 
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(tick(env, new Date(event.scheduledTime)));
+    const now = new Date(event.scheduledTime);
+    ctx.waitUntil(tick(env, now));
+    if (now.getUTCMinutes() % 10 === 0) ctx.waitUntil(checkResults(env, now));
   },
 };
 
@@ -94,4 +97,33 @@ async function sendPush(env, endpoint, ttl) {
       Authorization: `vapid t=${jwt}, k=${env.VAPID_PUBLIC}`, TTL: String(ttl), Urgency: 'high', 'Content-Length': '0' } });
     return r.status;
   } catch { return 0; }
+}
+
+// ---------- game results ----------
+// Every 10 minutes, read the Pilots' own calendar feed. A new win sends
+// everyone a push; the phone fetches /results and shows the congrats.
+const FEED = 'https://portlandpilots.com/services/responsive-calendar.ashx?type=events&sport=9&location=all&date=';
+export function parseResults(days) {
+  const out = {};
+  for (const day of days || []) for (const e of day?.events || []) {
+    const r = e.result;
+    if (e.sport?.shortname !== 'wbball' || !r || !/^[WLT]$/.test(r.status || '')) continue;
+    out[String(e.date).slice(0, 10)] = { r: r.status, us: +r.team_score, them: +r.opponent_score, opp: e.opponent?.title || '', at: e.at_vs || 'vs', start: e.date };
+  }
+  return out;
+}
+export async function checkResults(env, now = new Date(), send = sendPush, get = url => fetch(url, { headers: { 'User-Agent': 'pulse-push' } }).then(r => r.json())) {
+  const pt = localNow('America/Los_Angeles', now).date;
+  const [y, m, d] = pt.split('-');
+  let found;
+  try { found = parseResults(await get(FEED + `${+m}/${+d}/${y}`)); } catch { return; }
+  const saved = JSON.parse(await env.SUBS.get('results') || '{}');
+  const fresh = Object.keys(found).filter(k => !saved[k]);
+  if (!fresh.length) return;
+  fresh.forEach(k => { saved[k] = found[k]; });
+  await env.SUBS.put('results', JSON.stringify(saved));
+  // Only cheer for games that just ended, not ones found late.
+  const wins = fresh.filter(k => found[k].r === 'W' && now - new Date(found[k].start + '-08:00') < 12 * 3600e3);
+  if (!wins.length) return;
+  for (const s of await loadSubs(env)) if (s.wins !== false) await send(env, s.endpoint, 3 * 3600);
 }

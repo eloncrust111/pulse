@@ -580,3 +580,11 @@ textarea { resize: vertical; }
 @keyframes talkPulse { 50% { transform: scale(1.5); opacity: .5; } }
 .remind-row > span { white-space: nowrap; font-weight: 600; }
 .remind-row select { width: auto; flex: none; min-width: 120px; }
+
+.pr-q { margin-top: 8px; }
+.win-card { position: relative; text-align: center; color: #fff; background: linear-gradient(135deg, #5340C9, #1E1656); }
+.win-card .pr-x { position: absolute; top: 10px; right: 12px; color: rgba(255, 255, 255, .7); }
+.win-card .muted { color: rgba(255, 255, 255, .75); }
+.win-big { font-size: 40px; line-height: 1; animation: pop .6s cubic-bezier(.2, 1.4, .4, 1) both; }
+.win-t { font-size: 22px; font-weight: 900; margin-top: 6px; }
+.win-s { font-weight: 700; margin: 2px 0 4px; }
