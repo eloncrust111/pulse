@@ -5,6 +5,7 @@ import { $, $$, esc, uid, dateStr, timeStr, parseDate, addDays, toTs, fmtDay, fm
 import { barChart, lineChart } from './charts.js';
 import { analyzeGut, guessTags, compareDays, median } from './patterns.js';
 import { offSearch, offBarcode, startScanner, readLabel } from './lookup.js';
+import { drawSummary } from './share-image.js';
 
 // ---------- constants ----------
 const MEALS = [
@@ -263,12 +264,94 @@ function screenToday() {
     </div>
     <div class="mbs">${macroBar('Protein', 'p', t.p, g.p)}${macroBar('Carbs', 'c', t.c, g.c)}${macroBar('Fat', 'f', t.f, g.f)}</div>
   </section>
+  ${prepCard()}
   ${MEALS.map(m => mealCard(m, ents.filter(e => e.meal === m.id), d)).join('')}
   ${waterCard(day, g)}
   ${bodyCard(day)}
   ${feelCard(d)}
   ${gutCard(d)}
   <div class="spacer"></div>`;
+}
+
+// ---------- meal prep ----------
+const activePreps = () => db.list('preps').filter(p => p.left > 0.05).sort((a, b) => a.madeOn.localeCompare(b.madeOn));
+const prepAge = p => Math.round((parseDate(dateStr()) - parseDate(p.madeOn)) / 864e5);
+const prepMacros = p => scale(p.per, p.gramsEach);
+function prepRows(list, act = 'eatPrep') {
+  return list.map(p => {
+    const age = prepAge(p), m = prepMacros(p);
+    return `<div class="prep">
+      <button class="prep-main" data-act="editPrep" data-id="${p.id}">${thumb(p.photo, '🥡')}
+        <div class="row-main"><div class="row-name">${esc(p.name)}</div>
+        <div class="row-sub">${fmt(m.cal)} cal · ${macroLine(m)}</div>
+        <div class="prep-meta"><b>${fmt(p.left)} of ${p.containers} left</b> · ${age === 0 ? 'made today' : age === 1 ? 'made yesterday' : `made ${age} days ago`}${age >= 4 ? ` <span class="warn-t">· eat soon</span>` : ''}</div></div></button>
+      <button class="prep-eat" data-act="${act}" data-id="${p.id}">Eat one</button></div>`;
+  }).join('');
+}
+function prepCard() {
+  const list = activePreps();
+  if (!list.length) return '';
+  const left = list.reduce((s, p) => s + p.left, 0);
+  return `<section class="card prep-card">
+    <div class="card-head"><h3>🥡 Meal prep</h3><span class="muted small">${fmt(left)} container${left === 1 ? '' : 's'} ready</span></div>
+    ${prepRows(list)}
+  </section>`;
+}
+function adjustPrep(id, containers) {
+  const p = db.get('preps', id);
+  if (!p) return;
+  db.put('preps', { ...p, left: Math.max(0, Math.round((p.left + containers) * 100) / 100) });
+}
+// Logs as the recipe (so stomach patterns still see it) but with the batch's own macros.
+function prepItem(p) {
+  const r = db.get('recipes', p.recipeId);
+  return { ...(r ? itemFor('recipe', r) : { kind: 'recipe', id: p.recipeId, name: p.name, brand: 'Recipe', photo: p.photo }),
+    per: p.per, servingG: p.gramsEach, servingLabel: 'container' };
+}
+function eatPrep(id) {
+  const p = db.get('preps', id);
+  if (p) openAmount({ item: prepItem(p), prep: p, meal: defaultMeal(), date: ui.date });
+}
+
+function openPrep({ recipe = null, prep = null }) {
+  const r = recipe || db.get('recipes', prep?.recipeId);
+  const info = r ? recipeInfo(r, getFood) : null;
+  const p = prep ? { ...prep } : { id: uid(), recipeId: r.id, name: r.name, photo: r.photo || '', madeOn: dateStr(),
+    containers: info.servings || 5, totalG: Math.round(info.weight) || '' };
+  const s = openSheet({
+    title: prep ? 'Meal prep batch' : 'Meal prep', full: true, lock: true,
+    body: `<div class="amt-food">${thumb(p.photo, '🥡')}<div><div class="amt-name">${esc(p.name)}</div><div class="muted small">${prep ? `Made ${fmtDay(p.madeOn)}` : 'Split a batch into containers'}</div></div></div>
+      <div class="grid2 mt">
+        <div class="field"><label>Containers</label><input id="pc" inputmode="numeric" value="${p.containers}"></div>
+        <div class="field"><label>Total weight</label><div class="unit-in"><input id="pt" inputmode="decimal" value="${fmtIn(p.totalG)}" placeholder="whole batch"><span>g</span></div></div>
+        <div class="field"><label>Made on</label><input type="date" id="pd" value="${p.madeOn}"></div>
+        ${prep ? `<div class="field"><label>Containers left</label><input id="pl" inputmode="decimal" value="${fmtIn(p.left)}"></div>` : ''}
+      </div>
+      <p class="muted tiny">Weigh the whole batch after cooking (minus the pot or containers). Pulse splits it evenly, so each container is one tap to log.</p>
+      <div class="totals" id="ptot"></div>
+      ${prep ? `<button class="btn ghost danger-t full" data-x="del">Remove batch</button>` : ''}`,
+    footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">${prep ? 'Save' : 'Add to fridge'}</button>`,
+  });
+  const read = () => ({ n: Math.max(1, Math.round(num(s.$('#pc').value))), g: num(s.$('#pt').value) });
+  function tot() {
+    const { n, g } = read();
+    const per = info && g ? scale(info.total, 1 / g) : p.per;
+    s.$('#ptot').innerHTML = per && g ? `<div class="tot-row"><span>Each container</span><b>${fmt(scale(per, g / n).cal)} cal</b><span>${fmt(g / n)} g · ${macroLine(scale(per, g / n))}</span></div>`
+      : `<p class="muted small">Add the total weight to see each container's macros.</p>`;
+  }
+  s.on('input', '#pc, #pt', tot);
+  s.on('click', '[data-x="del"]', async () => { if (await confirmSheet('Remove this batch? Meals you already logged stay.', 'Remove')) { db.remove('preps', p.id); closeAllSheets(); } });
+  s.on('click', '[data-x="save"]', () => {
+    const { n, g } = read();
+    if (!(g > 0)) return toast('Add the total weight in grams');
+    const per = info ? scale(info.total, 1 / g) : scale(p.per, p.totalG / g);
+    Object.assign(p, { containers: n, totalG: g, gramsEach: g / n, per, madeOn: s.$('#pd').value || p.madeOn,
+      left: prep ? Math.max(0, num(s.$('#pl').value)) : n });
+    db.put('preps', p);
+    s.close();
+    toast(prep ? 'Saved' : `🥡 ${n} containers in the fridge`);
+  });
+  tot();
 }
 
 function mealCard(m, ents, date) {
@@ -387,6 +470,8 @@ function recipeListHTML() {
 function screenRecipes() {
   return `${header('Recipes', `${db.list('recipes').length} saved`, `<button class="top-btn" data-act="newRecipe">＋ New</button>`)}
   <div class="pad">
+    ${activePreps().length ? `<section class="card prep-card"><div class="card-head"><h3>🥡 In the fridge</h3></div>${prepRows(activePreps())}</section>`
+      : db.list('recipes').length ? `<div class="prep-hint">🥡 <div><b>Meal prepping?</b> Open a recipe and tap <b>I meal-prepped this</b>. Pulse splits the batch into containers so each one is a single tap to log.</div></div>` : ''}
     ${db.list('recipes').length ? `<div class="search"><input type="search" placeholder="Search recipes" value="${esc(ui.recipeQ)}" data-input="recipeQ"></div>` : ''}
     <div class="list" id="recipeList">${recipeListHTML()}</div>
   </div>`;
@@ -423,7 +508,6 @@ function screenTrends() {
   const sleepVals = days.map(d => d.sleepMin != null ? d.sleepMin / 60 : 0);
   const sleepLogged = sleepVals.filter(Boolean);
   const recov = dv('recovery').filter(x => x != null);
-  const weights = dv('weight');
 
   // top foods in range
   const counts = new Map();
@@ -480,13 +564,55 @@ function screenTrends() {
       ${barChart({ values: dv('strain').map(x => x || 0), labels, dates, color: 'var(--c)', fmtY: x => Math.round(x * 10) / 10 })}
     </section>
 
-    ${weights.filter(x => x != null).length >= 2 ? `<section class="card"><div class="card-head"><h3>Weight</h3></div>${lineChart({ series: [{ values: weights, color: 'var(--purple-3)' }], labels, fmtY: x => Math.round(x) })}</section>` : ''}
+    ${weightCard(dates, labels)}
 
     ${top.length ? `<section class="card"><h3>Most-logged foods</h3>${top.map(([name, c]) => `<div class="kv-row"><span>${esc(name)}</span><span class="muted">${c.n}×</span></div>`).join('')}</section>` : ''}
 
     ${feelTrends(dates)}
     ${gutTrends(dates)}
+    <button class="btn soft full" data-act="shareImg">📸 Save a summary to Photos</button>
   </div>`;
+}
+
+// Weight with a 7-day average line, since single weigh-ins swing with water and salt.
+const weighIns = () => db.list('days').filter(d => d.weight != null).sort((a, b) => a.id.localeCompare(b.id));
+function weekAvg(all, date) {
+  const w = all.filter(x => x.id <= date && x.id > addDays(date, -7)).map(x => x.weight);
+  return w.length ? w.reduce((a, b) => a + b, 0) / w.length : null;
+}
+function weightCard(dates, labels) {
+  const all = weighIns(), inRange = all.filter(d => d.id >= dates[0]);
+  const head = `<div class="card-head"><h3>⚖️ Body weight</h3><button class="pill-btn sm" data-act="logWeight">＋ Log weight</button></div>`;
+  if (!all.length) return `<section class="card">${head}<p class="muted small">Weigh in a few mornings a week: same scale, after the bathroom, before eating. Pulse draws a 7-day average so normal day-to-day swings don't throw you off.</p></section>`;
+  const last = all[all.length - 1];
+  const raw = dates.map(d => db.get('days', d)?.weight ?? null);
+  const avg = dates.map(d => all.some(x => x.id <= d && x.id > addDays(d, -7)) ? weekAvg(all, d) : null);
+  const change = inRange.length >= 2 ? weekAvg(all, last.id) - weekAvg(all, inRange[0].id) : null;
+  const r1 = x => Math.round(x * 10) / 10;
+  return `<section class="card">${head}
+    <div class="big-stats"><div><b>${r1(last.weight)}</b><span>latest · ${fmtDay(last.id)}</span></div><div><b>${r1(weekAvg(all, last.id))}</b><span>7-day avg</span></div>
+      <div><b>${change == null ? '–' : (change > 0 ? '+' : '') + r1(change)}</b><span>change this range</span></div></div>
+    ${inRange.length >= 2 ? lineChart({ series: [{ values: raw, color: 'var(--lav-2)' }, { values: avg, color: 'var(--purple-3)' }], labels, fmtY: x => Math.round(x) })
+      + `<div class="legend"><span><i class="dot" style="background:var(--lav-2)"></i>Weigh-ins</span><span><i class="dot" style="background:var(--purple-3)"></i>7-day average</span></div>` : ''}
+    <p class="muted tiny">Weight can move 2–4 lb in a day from water, salt and training. The average line is the one to watch.</p>
+  </section>`;
+}
+function openWeight(date = dateStr()) {
+  const last = weighIns().pop();
+  const s = openSheet({
+    title: 'Log weight',
+    body: `<div class="amt-input"><input id="wv" type="text" inputmode="decimal" value="${db.get('days', date)?.weight ?? ''}" placeholder="${last ? last.weight : 'lb'}" aria-label="Weight in pounds"><span class="muted">lb</span></div>
+      <div class="field"><label>Date</label><input type="date" id="wd" value="${date}"></div>
+      ${last ? `<p class="muted small center">Last: ${last.weight} lb · ${fmtDay(last.id)}</p>` : ''}`,
+    footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  s.on('click', '[data-x="save"]', () => {
+    const w = optNum(s.$('#wv').value), d = s.$('#wd').value || date;
+    if (!(w > 0)) return toast('Type your weight');
+    db.put('days', { ...(db.get('days', d) || { id: d, date: d }), weight: w });
+    s.close(); toast('Saved');
+  });
+  s.$('#wv').focus();
 }
 
 function gutTrends(dates) {
@@ -604,8 +730,7 @@ function screenMe() {
       <div class="btn-col">
         <button class="btn soft" data-act="backup">⬇︎ Download backup</button>
         <label class="btn soft">⬆︎ Restore from backup<input type="file" accept=".json,application/json" hidden data-change="restore"></label>
-        <button class="btn soft" data-act="csvDays">📊 Export daily summary (spreadsheet)</button>
-        <button class="btn soft" data-act="csvFood">🧾 Export food log (spreadsheet)</button>
+        <button class="btn soft" data-act="shareImg">📸 Save a summary to Photos</button>
       </div>
       <p class="muted tiny">${plural(db.list('foods').length, 'food')} · ${plural(db.list('recipes').length, 'recipe')} · ${plural(new Set(db.list('entries').map(e => e.date)).size, 'day')} logged</p>
     </section>
@@ -650,8 +775,10 @@ const acts = {
   syncNow: () => sync.syncNow(),
   signOut: async () => { if (await confirmSheet('Sign out of Pulse on this phone?', 'Sign out', false)) { await sync.signOut(); location.reload(); } },
   backup: () => exportBackup(),
-  csvDays: () => exportDaysCSV(),
-  csvFood: () => exportFoodCSV(),
+  shareImg: () => openShareImage(),
+  eatPrep: d => eatPrep(d.id),
+  editPrep: d => openPrep({ prep: db.get('preps', d.id) }),
+  logWeight: () => openWeight(),
 };
 const inputs = {
   foodQ: el => { ui.foodQ = el.value; $('#foodList').innerHTML = foodListHTML(); },
@@ -714,6 +841,7 @@ function editEntry(id) {
   if (e.kind === 'quick') return openQuick({ entry: e });
   const obj = db.get(e.kind === 'food' ? 'foods' : 'recipes', e.refId);
   const item = obj ? itemFor(e.kind, obj) : { kind: e.kind, id: e.refId, name: e.name, brand: e.brand, per: e.per, servingG: 0 };
+  if (e.prepId) Object.assign(item, { per: e.per, servingG: db.get('preps', e.prepId)?.gramsEach || 0, servingLabel: 'container' });
   openAmount({ item, entry: e, meal: e.meal, date: e.date });
 }
 
@@ -763,10 +891,13 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
     } else {
       rows = db.list('recipes').sort((a, b) => a.name.localeCompare(b.name)).map(r => ['recipe', r, 'Recipe']);
     }
-    s.$('#plist').innerHTML = rows.length ? rows.map(([k, o, sub]) => `<button class="row" data-x="pick" data-k="${k}" data-id="${o.id}">
+    const preps = mode === 'log' && !q && tab === 'recent' ? activePreps() : [];
+    s.$('#plist').innerHTML = (preps.length ? `<h4 class="sec">🥡 From your meal prep</h4>${preps.map(p => `<button class="row" data-x="prep" data-id="${p.id}">
+        ${thumb(p.photo, '🥡')}<div class="row-main"><div class="row-name">${esc(p.name)}</div><div class="row-sub">1 container · ${fmt(prepMacros(p).cal)} cal · ${fmt(p.left)} left</div></div><span class="row-plus">＋</span></button>`).join('')}<h4 class="sec">Recent</h4>` : '')
+      + (rows.length ? rows.map(([k, o, sub]) => `<button class="row" data-x="pick" data-k="${k}" data-id="${o.id}">
         ${thumb(o.photo, k === 'recipe' ? '🍲' : '🥣')}<div class="row-main"><div class="row-name">${esc(o.name)}${o.fav ? ' <span class="star">★</span>' : ''}</div><div class="row-sub">${sub}</div></div><span class="row-plus">＋</span></button>`).join('')
       : `<div class="empty small"><p>${q ? `Nothing saved called “${esc(q)}”.` : tab === 'recipes' ? 'No recipes yet.' : 'No saved foods yet.'}</p>
-         <button class="btn primary" data-x="new">📷 Add it from the label</button>${q ? `<button class="btn soft" data-x="online">🔎 Search online for “${esc(q)}”</button>` : ''}</div>`;
+         <button class="btn primary" data-x="new">📷 Add it from the label</button>${q ? `<button class="btn soft" data-x="online">🔎 Search online for “${esc(q)}”</button>` : ''}</div>`);
   }
   const picked = (kind, obj) => {
     if (mode === 'ingredient') { onPick(obj); s.close(); return; }
@@ -778,6 +909,14 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
   };
   s.on('input', '#pq', el => { q = el.value.trim(); draw(); });
   s.on('click', '[data-x="tab"]', el => { tab = el.dataset.t; draw(); });
+  s.on('click', '[data-x="prep"]', el => {
+    const p = db.get('preps', el.dataset.id);
+    openAmount({ item: prepItem(p), prep: p, meal, date, onAdded: e => {
+      added++; addedCal += e.macros.cal;
+      s.$('#addedTxt').innerHTML = `<b>✓ ${added} added</b> · ${fmt(addedCal)} cal`;
+      draw();
+    } });
+  });
   s.on('click', '[data-x="pick"]', el => picked(el.dataset.k, db.get(el.dataset.k === 'food' ? 'foods' : 'recipes', el.dataset.id)));
   s.on('click', '[data-x="new"]', () => openFoodForm({ prefill: q ? { name: q } : {}, onSaved: f => picked('food', f) }));
   s.on('click', '[data-x="scan"]', () => scanFlow({ onFood: f => picked('food', f) }));
@@ -787,13 +926,15 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
 }
 
 // ---------- amount sheet ----------
-function openAmount({ item, entry = null, meal, date, onAdded }) {
+function openAmount({ item, entry = null, prep = null, meal, date, onAdded }) {
   let unit = 'g', curMeal = meal;
-  const startG = entry ? entry.grams : (lastGrams(item.kind, item.id) ?? (item.servingG || 100));
+  if (!prep && entry?.prepId) prep = db.get('preps', entry.prepId);
+  const startG = entry ? entry.grams : prep ? prep.gramsEach : (lastGrams(item.kind, item.id) ?? (item.servingG || 100));
   const quick = [];
-  const lg = lastGrams(item.kind, item.id);
+  const lg = prep ? null : lastGrams(item.kind, item.id);
+  if (prep) quick.push([prep.gramsEach, `1 container · ${fmt(prep.gramsEach)} g`], [prep.gramsEach / 2, '½ container']);
   if (lg) quick.push([lg, `Last time · ${fmt(lg)} g`]);
-  if (item.servingG) {
+  if (item.servingG && !prep) {
     const sl = item.kind === 'food' && item.servingLabel ? item.servingLabel : 'serving';
     quick.push([item.servingG, `${/^\d/.test(sl) ? '' : '1 '}${esc(sl)} · ${fmt(item.servingG)} g`]);
   }
@@ -804,7 +945,7 @@ function openAmount({ item, entry = null, meal, date, onAdded }) {
     body: `<div class="amt-food">${thumb(item.photo, item.kind === 'recipe' ? '🍲' : '🥣')}<div><div class="amt-name">${esc(item.name)}</div><div class="muted small">${esc(item.brand || '')}</div></div></div>
       ${sus ? `<p class="tip">⚠️ Heads up: stomach trouble followed this ${sus.hit} of the ${sus.eaten} times you had it.</p>` : ''}
       <div class="amt-input"><input id="amt" type="text" inputmode="decimal" value="${fmtIn(startG)}" autocomplete="off" aria-label="Amount">
-        <div class="seg unit">${`<button data-x="unit" data-u="g" class="on">grams</button>`}${item.servingG ? `<button data-x="unit" data-u="s">servings</button>` : ''}</div></div>
+        <div class="seg unit">${`<button data-x="unit" data-u="g" class="on">grams</button>`}${item.servingG ? `<button data-x="unit" data-u="s">${prep ? 'containers' : 'servings'}</button>` : ''}</div></div>
       <div class="chips">${quick.map(([g, l]) => `<button class="chip sm" data-x="q" data-g="${g}">${l}</button>`).join('')}</div>
       <div class="amt-prev" id="prev"></div>
       <div class="field"><label>Meal</label><div class="chips">${MEALS.map(m => `<button class="chip ${m.id === meal ? 'on' : ''}" data-x="meal" data-m="${m.id}">${m.icon} ${m.name}</button>`).join('')}</div></div>
@@ -830,16 +971,24 @@ function openAmount({ item, entry = null, meal, date, onAdded }) {
   });
   s.on('click', '[data-x="q"]', el => { const g = num(el.dataset.g); inp.value = fmtIn(unit === 'g' ? g : g / item.servingG); update(); });
   s.on('click', '[data-x="meal"]', el => { curMeal = el.dataset.m; s.$$('[data-x="meal"]').forEach(b => b.classList.toggle('on', b === el)); update(); });
-  s.on('click', '[data-x="del"]', () => { db.remove('entries', entry.id); s.close(); toast('Removed'); });
+  // Eating from a meal-prep batch takes containers out of the fridge (and puts them back if removed).
+  const usedOf = g => prep && prep.gramsEach ? g / prep.gramsEach : 0;
+  s.on('click', '[data-x="del"]', () => {
+    db.remove('entries', entry.id);
+    if (entry.prepId) adjustPrep(entry.prepId, usedOf(entry.grams));
+    s.close(); toast('Removed');
+  });
   s.on('click', '[data-x="save"]', () => {
     const g = grams();
     if (!(g > 0)) { inp.focus(); return toast('Type how many grams'); }
     const e = entry ? { ...entry } : { id: uid(), date, kind: item.kind, refId: item.id };
     Object.assign(e, { name: item.name, brand: item.kind === 'food' ? item.brand : '', grams: g, per: item.per,
       macros: scale(item.per, g), meal: curMeal, time: s.$('#etime').value || timeStr() });
+    if (prep) { e.prepId = prep.id; adjustPrep(prep.id, -(usedOf(g) - (entry ? usedOf(entry.grams) : 0))); }
     db.put('entries', e);
     s.close();
-    toast(entry ? 'Saved' : `Added · ${fmt(e.macros.cal)} cal`);
+    const left = prep ? db.get('preps', prep.id)?.left : null;
+    toast(entry ? 'Saved' : `Added · ${fmt(e.macros.cal)} cal${left != null ? ` · ${fmt(left)} left` : ''}`);
     onAdded?.(e);
   });
   update();
@@ -1160,10 +1309,15 @@ function openRecipeDetail(id) {
       ${info.ings.map(i => `<div class="kv-row"><span>${esc(i.name)}</span><span class="muted">${fmt(num(i.grams))} g · ${fmt(i.macros.cal)} cal</span></div>`).join('')}
       ${r.steps ? `<h4 class="sec">Instructions</h4><p class="pre">${esc(r.steps)}</p>` : ''}
       ${r.notes ? `<h4 class="sec">Notes</h4><p class="pre">${esc(r.notes)}</p>` : ''}
+      <button class="btn soft full mt" data-x="prep">🥡 I meal-prepped this</button>
       <button class="btn ghost full" data-x="dup">Duplicate (make a variation)</button>`,
     footer: `<button class="btn ghost" data-x="edit">Edit</button><button class="btn primary grow" data-x="log">Log it</button>`,
   });
   s.on('click', '[data-x="edit"]', () => { s.close(); openRecipeForm({ recipe: db.get('recipes', id) }); });
+  s.on('click', '[data-x="prep"]', () => {
+    if (!info.ings.length) return toast('Add ingredients to the recipe first');
+    s.close(); openPrep({ recipe: db.get('recipes', id) });
+  });
   s.on('click', '[data-x="dup"]', () => { const c = { ...JSON.parse(JSON.stringify(r)), id: uid(), name: r.name + ' (copy)' }; db.put('recipes', c); s.close(); openRecipeForm({ recipe: c }); });
   s.on('click', '[data-x="log"]', () => { s.close(); openAmount({ item: itemFor('recipe', db.get('recipes', id)), meal: defaultMeal(), date: ui.date, onAdded: () => go('today') }); });
 }
@@ -1438,20 +1592,56 @@ async function restoreBackup(file) {
     toast(`Restored ${n} items`);
   } catch { toast("That doesn't look like a Pulse backup"); }
 }
-const csvCell = v => v == null ? '' : /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
-const toCSV = rows => rows.map(r => r.map(csvCell).join(',')).join('\n');
-function exportDaysCSV() {
+
+// ---------- summary image ----------
+function summaryData(range) {
+  const n = range === 'week' ? 7 : 30, today = dateStr(), g = goals();
+  const dates = Array.from({ length: n }, (_, i) => addDays(today, i - n + 1));
   const by = {};
-  db.list('entries').forEach(e => (by[e.date] ||= []).push(e.macros));
-  const dates = new Set([...Object.keys(by), ...db.list('days').map(d => d.id), ...db.list('stomach').map(s => s.date)]);
-  const rows = [['date', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'fiber_g', 'water_oz', 'sleep_hours', 'sleep_perf_pct', 'recovery_pct', 'strain', 'hrv', 'resting_hr', 'calories_burned', 'steps', 'weight_lb', 'energy', 'stomach_episodes', 'felt_off', 'journal']];
-  [...dates].sort().forEach(d => {
-    const t = by[d] ? sumMacros(by[d]) : null, x = db.get('days', d) || {};
-    const r1 = v => v == null ? '' : Math.round(v * 10) / 10;
-    rows.push([d, t && Math.round(t.cal), t && r1(t.p), t && r1(t.c), t && r1(t.f), t && r1(t.fiber), x.water, x.sleepMin != null ? r1(x.sleepMin / 60) : '',
-      x.sleepPerf, x.recovery, x.strain, x.hrv, x.rhr, x.burned, x.steps, x.weight, x.energy, db.list('stomach').filter(s => s.date === d).length, db.list('feel').filter(s => s.date === d).length, x.notes]);
+  db.list('entries').forEach(e => { if (e.date >= dates[0]) (by[e.date] ||= []).push(e.macros); });
+  const totals = dates.map(d => by[d] ? sumMacros(by[d]) : null), logged = totals.filter(Boolean);
+  const avg = k => logged.length ? logged.reduce((s, t) => s + t[k], 0) / logged.length : 0;
+  const days = dates.map(d => db.get('days', d) || {});
+  const avgOf = k => { const v = days.map(d => d[k]).filter(x => x != null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const allW = weighIns(), w = allW.filter(d => d.id >= dates[0]);
+  const r1 = x => Math.round(x * 10) / 10;
+  const dw = w.length >= 2 ? weekAvg(allW, w[w.length - 1].id) - weekAvg(allW, w[0].id) : 0;
+  const weight = w.length >= 2 ? `${r1(w[w.length - 1].weight)} (${dw >= 0 ? '+' : ''}${r1(dw)})` : w.length ? String(r1(w[0].weight)) : '';
+  const fmtD = d => parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const name = (profile()?.name || '').trim().split(/\s+/)[0];
+  return {
+    kicker: 'Pulse',
+    title: name ? `${name}'s ${range === 'week' ? 'week' : 'month'}` : range === 'week' ? 'My week' : 'My month',
+    rangeLabel: `${fmtD(dates[0])} – ${fmtD(today)}`,
+    badge: streak() >= 3 ? `🔥 ${streak()}-day logging streak` : '',
+    days: dates.map((d, i) => ({ label: n === 7 ? parseDate(d).toLocaleDateString(undefined, { weekday: 'short' }) : `${parseDate(d).getMonth() + 1}/${parseDate(d).getDate()}`, cal: totals[i]?.cal || 0 })),
+    n, logged: logged.length, goalCal: g.cal, goalP: g.p,
+    onTarget: logged.filter(t => Math.abs(t.cal - g.cal) <= g.cal * 0.1).length,
+    avgCal: logged.length ? avg('cal') : null, avgP: avg('p'), avgC: avg('c'), avgF: avg('f'),
+    avgSleep: avgOf('sleepMin'), avgRecovery: avgOf('recovery'), weight,
+    gutDays: new Set(db.list('stomach').filter(e => e.date >= dates[0]).map(e => e.date)).size,
+    offDays: new Set(db.list('feel').filter(e => e.date >= dates[0]).map(e => e.date)).size,
+  };
+}
+function openShareImage() {
+  let range = 'week', blob = null;
+  const s = openSheet({
+    title: 'Save a summary', full: true,
+    body: `<div class="seg">${[['week', 'This week'], ['month', 'Last 30 days']].map(([k, l]) => `<button class="${k === range ? 'on' : ''}" data-x="rng" data-r="${k}">${l}</button>`).join('')}</div>
+      <div class="img-prev" id="ip"><div class="muted small center">Making your image…</div></div>
+      <p class="muted tiny center">Tap Save, then choose <b>Save Image</b> to put it in your camera roll.</p>`,
+    footer: `<button class="btn ghost" data-x="close">Close</button><button class="btn primary grow" data-x="save" disabled>Save to Photos</button>`,
   });
-  shareFile(`pulse-daily-${dateStr()}.csv`, toCSV(rows), 'text/csv');
+  async function make() {
+    s.$('[data-x="save"]').disabled = true;
+    blob = await drawSummary(summaryData(range));
+    const url = URL.createObjectURL(blob);
+    s.$('#ip').innerHTML = `<img src="${url}" alt="Summary image">`;
+    s.$('[data-x="save"]').disabled = false;
+  }
+  s.on('click', '[data-x="rng"]', el => { range = el.dataset.r; s.$$('[data-x="rng"]').forEach(b => b.classList.toggle('on', b === el)); make(); });
+  s.on('click', '[data-x="save"]', () => shareFile(`pulse-${range}-${dateStr()}.png`, blob, 'image/png'));
+  make();
 }
 
 // Plain-text summary of the last 60 days of stomach and feeling-off logs,
@@ -1480,14 +1670,6 @@ function exportReport() {
   L.push('', 'Patterns are from self-logged data and are not a diagnosis.');
   shareFile(`pulse-report-${dateStr()}.txt`, L.join('\n'), 'text/plain');
 }
-function exportFoodCSV() {
-  const rows = [['date', 'time', 'meal', 'food', 'brand', 'grams', 'calories', 'protein_g', 'carbs_g', 'fat_g', 'fiber_g']];
-  const r1 = v => Math.round((v || 0) * 10) / 10;
-  db.list('entries').sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time))
-    .forEach(e => rows.push([e.date, e.time, e.meal, e.name, e.brand, e.grams && r1(e.grams), Math.round(e.macros.cal), r1(e.macros.p), r1(e.macros.c), r1(e.macros.f), r1(e.macros.fiber)]));
-  shareFile(`pulse-food-log-${dateStr()}.csv`, toCSV(rows), 'text/csv');
-}
-
 // ---------- onboarding & auth ----------
 function fullscreen(html) {
   appEl.classList.remove('ready');
@@ -1517,7 +1699,7 @@ function showWelcome() {
     e.preventDefault();
     const fd = new FormData(e.target);
     saveProfile({ name: fd.get('name').trim(), goals: { ...DEFAULT_GOALS, cal: num(fd.get('cal')), p: num(fd.get('p')), c: num(fd.get('c')), f: num(fd.get('f')) } });
-    startApp();
+    startApp({ first: true });
   };
 }
 
@@ -1579,11 +1761,34 @@ async function afterLogin(user) {
   if (!profile()) showWelcome(); else startApp();
 }
 
-function startApp() {
+function startApp({ first = false } = {}) {
   applyTheme();
   appEl.classList.add('ready');
   render();
+  splash(first);
   navigator.storage?.persist?.();
+}
+
+// A short personal hello each time the app opens.
+function splash(first) {
+  const name = (profile()?.name || '').trim().split(/\s+/)[0];
+  const t = dateStr(), n = streak(), preps = activePreps().reduce((s, p) => s + p.left, 0);
+  const todayCal = sumMacros(dayEntries(t).map(e => e.macros)).cal;
+  const note = first ? 'Tap ＋ to log your first meal'
+    : n >= 2 ? `🔥 ${n} days logged in a row`
+    : preps >= 1 ? `🥡 ${fmt(preps)} meal-prep container${preps === 1 ? '' : 's'} ready`
+    : todayCal ? `${fmt(todayCal)} cal logged so far today`
+    : 'Ready when you are';
+  const el = document.createElement('div');
+  el.className = 'splash';
+  el.innerHTML = `<div class="splash-in"><img src="icons/icon-192.png" alt="">
+    <h1>${first ? 'Welcome' : 'Welcome back'}${name ? `, ${esc(name)}` : ''}</h1>
+    <p>${greeting()} · ${parseDate(t).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+    <div class="splash-note">${note}</div></div>`;
+  document.body.appendChild(el);
+  const done = () => { el.classList.add('out'); setTimeout(() => el.remove(), 450); };
+  el.addEventListener('click', done);
+  setTimeout(done, first ? 2400 : 1700);
 }
 
 // ---------- boot ----------
