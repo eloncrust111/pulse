@@ -8,6 +8,7 @@ import { offSearch, offBarcode, startScanner, readLabel } from './lookup.js';
 import { drawSummary } from './share-image.js';
 import { GAMES, gameOn, nextGame, teamLogo } from './games.js';
 import { parseHealth, SHORTCUT_NAME } from './health.js';
+import * as notify from './notify.js';
 
 // ---------- constants ----------
 const MEALS = [
@@ -591,6 +592,77 @@ function cycleTrends() {
   </section>`;
 }
 
+// ---------- notifications ----------
+// A short list on purpose: at most a few a day, nothing after bedtime.
+const NOTIFS = [
+  ['n_wish', '✨ 11:11', 'Make a wish at 11:11 AM. Disappears after a minute.', true],
+  ['n_bed', '🌙 Bedtime', '30 minutes before your bedtime goal.', true],
+  ['n_game', '🏀 Game days', 'The morning of each game, with who you play and when.', true],
+  ['n_prep', '🥡 Meal prep', "Once, when you're down to your last container.", true],
+  ['n_meds', '💊 Meds & vitamins', "8 AM, skipped if you've already checked them off.", false],
+  ['n_period', '🌸 Period heads-up', 'The evening before it might start. The lock screen just says "Heads-up".', false],
+];
+const hmMinus = (t, m) => { const x = +t.slice(0, 2) * 60 + +t.slice(3) - m; return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
+const nOn = k =>profile()?.[k] ?? NOTIFS.find(n => n[0] === k)[3];
+function notifyItems() {
+  const t = dateStr(), items = [];
+  if (nOn('n_wish')) items.push({ id: 'wish', at: '11:11', ttl: 60, close: 60, title: '11:11', body: 'Make a wish ✨' });
+  if (nOn('n_bed')) items.push({ id: 'bed', at: fromMin(toMin(bedGoal()) - 30), ttl: 1800, title: '🌙 Bedtime in 30 min', body: `Time to start winding down for ${fmtTime(bedGoal())}.` });
+  if (nOn('n_game')) GAMES.filter(g => g.date >= t).slice(0, 10).forEach(g =>
+    items.push({ id: 'game-' + g.date, date: g.date, at: g.time && g.time < '12:00' ? hmMinus(g.time, 180) : '09:00', ttl: 10800, title: '🏀 Game day', body: `${vsAt(g)} ${g.opp} · ${gameTime(g)}` }));
+  const meds = medList();
+  if (nOn('n_meds') && meds.length) {
+    const taken = db.get('days', t)?.meds || {};
+    items.push({ id: 'meds', at: '08:00', ttl: 7200, skip: meds.every(m => taken[m.id]) ? [t] : [], title: '💊 Meds & vitamins', body: "You haven't checked them off yet today." });
+  }
+  const preps = activePreps(), left = preps.reduce((a, p) => a + p.left, 0);
+  if (nOn('n_prep') && left > 0 && left <= 1) {
+    // Pick the day once so it can't turn into a daily nag.
+    const key = preps.map(p => p.id).join(',');
+    let note = {};
+    try { note = JSON.parse(localStorage.getItem('pulsePrepNote') || '{}'); } catch {}
+    if (note.key !== key) { note = { key, date: timeStr() < '17:00' ? t : addDays(t, 1) }; try { localStorage.setItem('pulsePrepNote', JSON.stringify(note)); } catch {} }
+    if (note.date >= t) items.push({ id: 'prep', date: note.date, at: '17:00', ttl: 14400, title: '🥡 Last meal-prep container', body: 'Might be time to cook a new batch.' });
+  }
+  if (nOn('n_period') && periodOn()) {
+    const c = cycleInfo();
+    const eve = c.next && addDays(c.next, -1);
+    if (eve && eve >= t) items.push({ id: 'period', date: eve, at: fromMin(toMin(bedGoal()) - 120), ttl: 7200, title: 'Heads-up', body: '🌸 Might start tomorrow.' });
+  }
+  return items;
+}
+let notifyTimer;
+function scheduleNotify(ms = 1500) {
+  clearTimeout(notifyTimer);
+  notifyTimer = setTimeout(() => notify.saveSchedule(notifyItems()).catch(() => {}), ms);
+}
+async function turnOnNotify() {
+  try { await notify.turnOn(); ui.notifyOn = true; toast('🔔 Notifications on'); scheduleNotify(0); queueRender(); }
+  catch (e) { toast(e.message); }
+}
+function notifyCard() {
+  const intro = ui.notifyOn ? 'On. Never more than a few a day, and nothing after bedtime.'
+    : !notify.installed() ? 'Add Pulse to your Home Screen first, then turn these on here.'
+    : 'A few quiet reminders. Never more than a few a day.';
+  return `<section class="card">
+    <h3>🔔 Notifications</h3>
+    <p class="muted small">${intro}</p>
+    ${ui.notifyOn ? '' : `<button class="btn primary full" data-act="notifyOn">Turn on notifications</button>`}
+    ${NOTIFS.filter(n => n[0] !== 'n_period' || periodOn()).map(([k, l, sub, def]) => switchRow(k, l, sub, def)).join('')}
+  </section>`;
+}
+// If the app is open at 11:11 AM, a small note shows for that minute only.
+function wishCheck() {
+  const el = $('.wish-bar'), show = timeStr() === '11:11' && nOn('n_wish') && ui.wishGone !== dateStr();
+  if (show && !el) {
+    const b = document.createElement('button');
+    b.className = 'wish-bar'; b.textContent = '✨ 11:11. Make a wish';
+    b.onclick = () => { ui.wishGone = dateStr(); b.remove(); };
+    document.body.appendChild(b);
+  } else if (!show && el) el.remove();
+}
+setInterval(wishCheck, 5000);
+
 // ---------- journal ----------
 function journalCard(day) {
   return `<section class="card tap" data-act="journal">
@@ -1065,6 +1137,8 @@ function screenMe() {
       <button class="btn soft full mt" data-act="editMeds">💊 Edit meds & vitamins</button>
     </section>
 
+    ${notifyCard()}
+
     <section class="card">
       <h3>Daily goals</h3>
       <div class="grid2">${gi('cal', 'Calories', 'cal')}${gi('p', 'Protein', 'g')}${gi('c', 'Carbs', 'g')}${gi('f', 'Fat', 'g')}${gi('fiber', 'Fiber', 'g')}${gi('water', 'Water', 'oz')}</div>
@@ -1141,6 +1215,7 @@ const acts = {
   healthGuide: () => openHealthGuide(),
   toggle: d => saveProfile({ [d.k]: !(profile()?.[d.k] ?? d.def === '1') }),
   period: d => setPeriod(d.f),
+  notifyOn: () => turnOnNotify(),
   eatPrep: d => eatPrep(d.id),
   editPrep: d => openPrep({ prep: db.get('preps', d.id) }),
   logWeight: () => openWeight(),
@@ -2166,6 +2241,9 @@ function startApp({ first = false } = {}) {
   render();
   splash(first);
   navigator.storage?.persist?.();
+  notify.clearStale();
+  notify.isOn().then(on => { ui.notifyOn = on; if (ui.tab === 'me') queueRender(); });
+  scheduleNotify();
 }
 
 // A short personal hello each time the app opens.
@@ -2200,6 +2278,7 @@ db.onChange(kind => {
   if (kind === 'settings' && ui.tab === 'me' && main.contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return sync.schedule();
   queueRender();
   sync.schedule();
+  if (kind !== 'entries') scheduleNotify();
 });
 sync.onStatus(() => { if (ui.tab === 'me') queueRender(); });
 document.addEventListener('visibilitychange', () => {
@@ -2207,6 +2286,9 @@ document.addEventListener('visibilitychange', () => {
   const t = dateStr();
   if (t !== lastToday) { if (ui.date === lastToday) ui.date = t; lastToday = t; queueRender(); }
   offerPaste();
+  notify.clearStale();
+  scheduleNotify();
+  wishCheck();
   sync.schedule(100);
 });
 window.addEventListener('online', () => sync.schedule(100));

@@ -48,3 +48,28 @@ with internet.
 ## Regenerating the icon
 
 `python tools/make_icons.py` (needs Pillow).
+
+## Notifications (free, ~5 minutes, one time)
+
+iPhones only deliver notifications to a home-screen web app when a server
+sends them. `push/` is a tiny Cloudflare Worker that does that. It only stores
+the times notifications are due; what they say stays on the phone.
+
+1. Make a free account at https://dash.cloudflare.com/sign-up
+2. In a terminal, from the `push` folder:
+   ```
+   npx wrangler login
+   npx wrangler kv namespace create SUBS
+   ```
+   Paste the `id` it prints into `wrangler.toml` (replace `PASTE_KV_ID_HERE`).
+3. Add the private key (it's in `push/vapid-private.txt`, which is never committed):
+   ```
+   npx wrangler secret put VAPID_PRIVATE
+   npx wrangler deploy
+   ```
+4. Put the URL it prints (like `https://pulse-push.yourname.workers.dev`) into
+   `PUSH_URL` in `config.js` and push to GitHub.
+5. On the phone: open Pulse from the home screen → Me → Notifications → Turn on.
+
+The worker runs once a minute on Cloudflare's free plan. If `vapid-private.txt`
+is ever lost, make a new key pair and update both `config.js` and the secret.
