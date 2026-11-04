@@ -102,6 +102,7 @@ async function sendPush(env, endpoint, ttl) {
 // ---------- game results ----------
 // Every 10 minutes, read the Pilots' own calendar feed. A new win sends
 // everyone a push; the phone fetches /results and shows the congrats.
+const FEED_HEADERS = { 'User-Agent': 'Mozilla/5.0 (compatible; pulse-push)', Accept: 'application/json' };
 const FEED = 'https://portlandpilots.com/services/responsive-calendar.ashx?type=events&sport=9&location=all&date=';
 export function parseResults(days) {
   const out = {};
@@ -112,9 +113,10 @@ export function parseResults(days) {
   }
   return out;
 }
-export async function checkResults(env, now = new Date(), send = sendPush, get = url => fetch(url, { headers: { 'User-Agent': 'pulse-push' } }).then(r => r.json())) {
-  const pt = localNow('America/Los_Angeles', now).date;
-  const [y, m, d] = pt.split('-');
+export async function checkResults(env, now = new Date(), send = sendPush, get = url => fetch(url, { headers: FEED_HEADERS }).then(r => r.json())) {
+  // The feed lists a week starting at the date given, so start from yesterday
+  // to catch a game that ended last night.
+  const [y, m, d] = new Date(new Date(localNow('America/Los_Angeles', now).date + 'T12:00:00Z') - 864e5).toISOString().slice(0, 10).split('-');
   let found;
   try { found = parseResults(await get(FEED + `${+m}/${+d}/${y}`)); } catch { return; }
   const saved = JSON.parse(await env.SUBS.get('results') || '{}');
