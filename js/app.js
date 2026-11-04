@@ -676,16 +676,19 @@ function periodWindow() {
 function periodRow(date, day) {
   if (!periodOn()) return '';
   const c = cycleInfo(date);
-  if (day.period) return `<section class="period-row on"><div class="pr-top"><span>🌸 Period${c.day ? ` · day ${c.day}` : ''}</span><button class="pr-x" data-act="period" data-f="" aria-label="Remove">✕</button></div>
-    <div class="muted tiny pr-q">How's it hitting you today?</div>
-    <div class="pr-flow">${PERIOD_FEELS.map(([k, e, l]) => `<button class="chip sm ${(day.periodFeel || []).includes(k) ? 'on' : ''}" data-act="periodFeel" data-k="${k}">${e} ${l}</button>`).join('')}</div></section>`;
+  if (day.period) return `<section class="period-row on"><div class="pr-top"><span>🌸 Period${c.day ? ` <span class="muted">· day ${c.day}</span>` : ''}</span><button class="pr-end" data-act="period" data-f="off">It ended</button></div>
+    <div class="pr-flow">${PERIOD_FEELS.map(([k, , l]) => `<button class="pr-tag ${(day.periodFeel || []).includes(k) ? 'on' : ''}" data-act="periodFeel" data-k="${k}">${l}</button>`).join('')}</div></section>`;
+  // The day after a period day, ask once instead of assuming either way.
+  if (day.period === undefined && db.get('days', addDays(date, -1))?.period) return `<div class="period-row"><span class="grow">🌸 Still on your period?</span>
+    <button class="pr-end" data-act="period" data-f="on">Yes</button><button class="pr-end" data-act="period" data-f="off">It ended</button></div>`;
   const soon = c.next && date >= dateStr() ? daysBetween(date, c.next) : null;
   const hint = soon != null && soon >= 0 && soon <= 4 ? (soon === 0 ? 'may start today' : `may start in ~${soon} day${soon === 1 ? '' : 's'}`) : c.day && c.day <= 60 ? `cycle day ${c.day}` : '';
   return `<button class="period-row" data-act="period" data-f="on"><span>🌸 Period</span><span class="muted small grow">${hint}</span><span class="link">Log</span></button>`;
 }
 function setPeriod(f) {
   const d = { ...(db.get('days', ui.date) || { id: ui.date, date: ui.date }) };
-  if (f) d.period = true; else { delete d.period; delete d.periodFeel; }
+  // 'off' records that it ended, so tomorrow doesn't ask again.
+  if (f === 'on') d.period = true; else { d.period = false; delete d.periodFeel; }
   db.put('days', d);
 }
 function togglePeriodFeel(k) {
@@ -718,7 +721,7 @@ function cycleTrends() {
       ${periodShare(db.list('feel'), 'feeling-off check-ins')}
     </div>
     ${!c.avg ? `<p class="muted small">Log a couple of periods and this will show your usual cycle length.</p>` : ''}
-    ${feelTop.length ? `<p class="small">Usually: ${feelTop.map(([k, n]) => { const f = PERIOD_FEELS.find(x => x[0] === k); return `<b>${f[1]} ${f[2].toLowerCase()}</b> (${n})`; }).join(', ')}</p>` : ''}
+    ${feelTop.length ? `<p class="small">Usually: ${feelTop.map(([k, n]) => { const f = PERIOD_FEELS.find(x => x[0] === k); return `<b>${f[2].toLowerCase()}</b> (${n})`; }).join(', ')}</p>` : ''}
   </section>`;
 }
 

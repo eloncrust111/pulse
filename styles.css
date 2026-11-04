@@ -588,3 +588,7 @@ textarea { resize: vertical; }
 .win-big { font-size: 40px; line-height: 1; animation: pop .6s cubic-bezier(.2, 1.4, .4, 1) both; }
 .win-t { font-size: 22px; font-weight: 900; margin-top: 6px; }
 .win-s { font-weight: 700; margin: 2px 0 4px; }
+.pr-end { border: 1.5px solid var(--line); background: none; color: var(--muted); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 13px; font-weight: 600; }
+.pr-tag { border: 0; background: var(--lav-3); color: var(--muted); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 13px; font-weight: 600; }
+.pr-tag.on { background: #E77FA833; color: var(--text); }
+.period-row.on { border-color: var(--line); }
