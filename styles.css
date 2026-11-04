@@ -626,3 +626,53 @@ textarea { resize: vertical; }
 .ask-form { display: flex; gap: 8px; width: 100%; }
 .ask-form input { flex: 1; min-width: 0; border: 1.5px solid var(--line); border-radius: 999px; padding: 12px 16px; font: inherit; font-size: 16px; background: var(--bg); color: inherit; }
 .ask-form .btn { border-radius: 50%; width: 46px; height: 46px; padding: 0; font-size: 20px; }
+
+/* goal rings */
+.rings { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 14px 8px 12px; }
+.gr { display: flex; flex-direction: column; align-items: center; gap: 2px; background: none; border: 0; color: inherit; font: inherit; padding: 0; }
+.gr-ring { position: relative; width: 56px; height: 56px; }
+.gr-ring span { position: absolute; inset: 0; display: grid; place-items: center; font-size: 20px; }
+.gr.done .gr-ring span { font-size: 22px; font-weight: 900; color: var(--good); }
+.gr b { font-size: 13px; margin-top: 2px; } .gr small { font-size: 11px; color: var(--muted); }
+.mring { width: 100%; height: 100%; }
+.mring-bg { fill: none; stroke: var(--lav-3); stroke-width: 6; }
+.mring-fg { fill: none; stroke-width: 6; stroke-linecap: round; transition: stroke-dashoffset .7s cubic-bezier(.2, .85, .25, 1); }
+.mring-fg.protein { stroke: var(--p); } .mring-fg.water { stroke: var(--c); } .mring-fg.sleep { stroke: var(--lav); }
+.mring-fg.meds, .mring-fg.train { stroke: var(--f); }
+.gr.done .mring-fg { stroke: var(--good); }
+.gr.done .gr-ring { animation: ringPop .5s ease; }
+@keyframes ringPop { 40% { transform: scale(1.12); } }
+.rings-all { grid-column: 1 / -1; text-align: center; font-weight: 800; font-size: 14px; margin-top: 8px; color: var(--good); }
+.card.flash { animation: cardFlash 1s ease; }
+@keyframes cardFlash { 30% { box-shadow: 0 0 0 3px var(--lav); } }
+.confetti { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 200; }
+
+/* calories burned */
+.burn { display: flex; align-items: center; gap: 14px; width: 100%; background: var(--lav-3); border: 0; border-radius: 16px; padding: 12px 14px; color: inherit; font: inherit; text-align: left; margin-bottom: 10px; }
+.burn-total { flex: 1; display: flex; flex-direction: column; }
+.burn-total b { font-size: 30px; font-weight: 800; letter-spacing: -1px; line-height: 1.1; }
+.burn-total span, .burn-split span { font-size: 12px; color: var(--muted); }
+.burn-split { display: flex; gap: 16px; }
+.burn-split div { display: flex; flex-direction: column; align-items: flex-end; }
+.burn-split b { font-size: 17px; font-weight: 700; }
+.cal3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cal3 input.auto { color: var(--purple-3); font-weight: 700; }
+.body-card .card-head .link { background: none; border: 0; font: inherit; }
+
+/* Apple Health setup steps */
+.hs-dots { display: flex; gap: 5px; justify-content: center; margin: 2px 0 18px; }
+.hs-dots i { width: 22px; height: 5px; border-radius: 3px; background: var(--lav-2); }
+.hs-dots i.on { background: var(--purple-3); }
+.hs-e { font-size: 44px; text-align: center; line-height: 1; }
+.hs-t { text-align: center; font-size: 22px; margin: 10px 0 14px; }
+.hs-lead { font-size: 17px; font-weight: 700; text-align: center; }
+.hs { list-style: none; padding: 0; margin: 0 0 12px; counter-reset: hs; display: grid; gap: 10px; }
+.hs li { counter-increment: hs; position: relative; padding-left: 34px; font-size: 16px; line-height: 1.45; }
+.hs li::before { content: counter(hs); position: absolute; left: 0; top: 0; width: 24px; height: 24px; border-radius: 50%; background: var(--lav-3); color: var(--purple-3); font-weight: 800; font-size: 13px; display: grid; place-items: center; }
+.hs-pre { background: var(--lav-3); border-radius: 12px; padding: 10px 14px; font-size: 15px; margin: 0 0 10px; }
+#hsf { margin: 0; flex: 1; }
+.body-card .btn-row { margin-bottom: 0; }
+.msg.assistant p { margin: 0 0 6px; } .msg.assistant p:last-child { margin: 0; }
+.msg.assistant ul { margin: 4px 0 0; padding-left: 18px; display: grid; gap: 5px; }
+.msg.assistant li::marker { color: var(--purple-3); }
+.body-card .btn-row .btn { padding: 11px 10px; font-size: 15px; white-space: nowrap; }

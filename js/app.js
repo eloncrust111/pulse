@@ -278,6 +278,7 @@ function render() {
   main.innerHTML = screens[ui.tab]();
   $$('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
   $('#fab').hidden = ui.tab !== 'today';
+  checkRings();
 }
 const queueRender = () => { if (!renderQueued) { renderQueued = true; queueMicrotask(render); } };
 function go(tab) { ui.tab = tab; render(); window.scrollTo(0, 0); }
@@ -319,6 +320,7 @@ function screenToday() {
     </div>
     <div class="mbs">${macroBar('Protein', 'p', t.p, g.p)}${macroBar('Carbs', 'c', t.c, g.c)}${macroBar('Fat', 'f', t.f, g.f)}</div>
   </section>
+  ${goalRings(d, day, t, g)}
   ${winCard(d)}
   ${readinessCard(d)}
   ${weekCard(d)}
@@ -337,6 +339,72 @@ function screenToday() {
   ${journalCard(day)}
   ${periodRow(d, day)}
   <div class="spacer"></div>`;
+}
+
+// ---------- goal rings ----------
+// Four small rings that fill as she logs. Closing one gets a little celebration.
+function ringsFor(d, day = db.get('days', d) || {}, t = sumMacros(dayEntries(d).map(e => e.macros)), g = goals()) {
+  const need = sleepNeed(addDays(d, -1)).min, acts = actsOf(day), meds = medList();
+  return [
+    { k: 'protein', e: '🥩', l: 'Protein', v: t.p / (g.p || 1), s: `${fmt(t.p)}/${fmt(g.p)}g`, go: 'meal', win: 'Protein goal hit 💪' },
+    { k: 'water', e: '💧', l: 'Water', v: (day.water || 0) / (g.water || 1), s: `${fmt(day.water || 0)}/${fmt(g.water)}oz`, go: 'water', win: 'Water goal hit 💧' },
+    { k: 'sleep', e: '😴', l: 'Sleep', v: day.sleepMin != null ? day.sleepMin / need : 0, s: day.sleepMin != null ? fmtSleep(day.sleepMin) : '–', go: 'sleep-card', win: 'Sleep goal hit 😴' },
+    meds.length ? { k: 'meds', e: '💊', l: 'Meds', v: meds.filter(m => day.meds?.[m.id]).length / meds.length, s: `${meds.filter(m => day.meds?.[m.id]).length}/${meds.length}`, go: 'meds', win: 'Meds all done ✅' }
+      : { k: 'train', e: '🏀', l: 'Training', v: acts.length ? 1 : 0, s: acts.length ? '✓' : '–', go: 'train-card', win: 'Training logged 🏀' },
+  ];
+}
+function miniRing(pct, cls) {
+  const r = 22, c = 2 * Math.PI * r;
+  return `<svg viewBox="0 0 52 52" class="mring"><circle cx="26" cy="26" r="${r}" class="mring-bg"/>
+    <circle cx="26" cy="26" r="${r}" class="mring-fg ${cls}" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - Math.min(pct, 1))}" transform="rotate(-90 26 26)"/></svg>`;
+}
+function goalRings(d, day, t, g) {
+  const rs = ringsFor(d, day, t, g), closed = rs.filter(r => r.v >= 1).length;
+  return `<section class="card rings">
+    ${rs.map(r => `<button class="gr ${r.v >= 1 ? 'done' : ''}" data-act="jump" data-to="${r.go}"><div class="gr-ring">${miniRing(r.v, r.k)}<span>${r.v >= 1 ? '✓' : r.e}</span></div><b>${r.l}</b><small>${r.s}</small></button>`).join('')}
+    ${closed === rs.length ? `<div class="rings-all">🔥 All rings closed</div>` : ''}
+  </section>`;
+}
+// Remembers which rings were already closed so each one celebrates once a day.
+function checkRings() {
+  if (ui.tab !== 'today' || ui.date !== dateStr()) return;
+  const d = ui.date, rs = ringsFor(d), now = rs.filter(r => r.v >= 1).map(r => r.k);
+  ui.ringSeen ||= {};
+  const before = ui.ringSeen[d];
+  ui.ringSeen[d] = now;
+  if (!before) return;
+  const fresh = rs.filter(r => r.v >= 1 && !before.includes(r.k));
+  if (!fresh.length) return;
+  const all = now.length === rs.length;
+  celebrate(all ? '🔥 All rings closed today!' : fresh[0].win, all);
+}
+function celebrate(msg, big = false) {
+  toast(msg);
+  buzz();
+  const cv = document.createElement('canvas');
+  cv.className = 'confetti';
+  const W = cv.width = innerWidth * 2, H = cv.height = innerHeight * 2, x = cv.getContext('2d');
+  document.body.appendChild(cv);
+  const cols = ['#7b5cd6', '#b9a4f5', '#ffd166', '#06d6a0', '#ef476f', '#ffffff'];
+  const ps = Array.from({ length: big ? 160 : 70 }, () => ({ x: W / 2 + (Math.random() - 0.5) * W * 0.3, y: H * 0.35, vx: (Math.random() - 0.5) * 28, vy: -Math.random() * 34 - 10,
+    s: 8 + Math.random() * 10, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.4, c: cols[Math.random() * cols.length | 0] }));
+  let f = 0;
+  (function step() {
+    x.clearRect(0, 0, W, H);
+    ps.forEach(p => { p.vy += 1.1; p.vx *= 0.985; p.x += p.vx; p.y += p.vy; p.r += p.vr;
+      x.save(); x.translate(p.x, p.y); x.rotate(p.r); x.fillStyle = p.c; x.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); x.restore(); });
+    if (++f < 110) requestAnimationFrame(step); else cv.remove();
+  })();
+}
+// A small tap of haptics: vibrate() on Android, and on iPhone (Safari 18+)
+// toggling a hidden switch makes the phone tick.
+function buzz() {
+  try { navigator.vibrate?.([12, 40, 12]); } catch {}
+  try {
+    const l = document.createElement('label'), i = document.createElement('input');
+    i.type = 'checkbox'; i.setAttribute('switch', ''); l.appendChild(i); l.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+    document.body.appendChild(l); l.click(); l.remove();
+  } catch {}
 }
 
 // ---------- game results ----------
@@ -395,7 +463,7 @@ function gameBanner(date) {
 function activityRow(date, day) {
   const on = new Set(actsOf(day)), today = date === dateStr();
   return `<section class="card train-card">
-    <div class="card-head"><h3>${today ? "Today's training" : 'Training'}</h3><span class="muted small">${on.size ? '' : today ? 'Check what you do today' : 'Nothing checked'}</span></div>
+    <div class="card-head"><h3>${today ? "Today's training" : 'Training'}</h3><span class="muted small">${on.size ? '' : today ? 'Tap what you did' : ''}</span></div>
     <div class="train-grid">${ACTIVITIES.map(([k, e, l, sub]) => `<button class="train ${on.has(k) ? 'on' : ''} ${k === 'rest' ? 'rest' : ''}" data-act="activity" data-k="${k}" aria-pressed="${on.has(k)}">
       <span class="tick">${on.has(k) ? '✓' : ''}</span><span class="train-e">${e}</span><span class="train-l">${l}${sub ? `<small>${sub}</small>` : ''}</span></button>`).join('')}</div>
   </section>`;
@@ -477,7 +545,7 @@ function sleepCard(date, day) {
     ${day.sleepMin != null || day.bed ? `<div class="sleep-main">
         <div><div class="sleep-big">${day.sleepMin != null ? fmtSleep(day.sleepMin) : '–'}</div><div class="muted small">${day.sleepPerf != null ? `${day.sleepPerf}% sleep performance` : 'last night'}</div></div>
         ${day.bed ? `<div class="sleep-times"><span>🛏️ ${fmtTime(day.bed)}</span><span>☀️ ${day.wake ? fmtTime(day.wake) : '–'}</span></div>` : ''}
-      </div>` : `<p class="muted small">Log when you went to bed and woke up. Pulse tracks how close you stay to your planned bedtime.</p>`}
+      </div>` : `<p class="muted small">Tap to log last night.</p>`}
     ${plan ? tonightRow(date, plan) : ''}
     ${last7.length ? `<div class="sleep-goal"><span>🎯 Near your planned bedtime <b>${near} of the last ${last7.length} nights</b></span>${st >= 2 ? `<span class="streak">🔥 ${st} in a row</span>` : ''}</div>` : ''}
   </section>`;
@@ -538,7 +606,8 @@ function openWakeTimes() {
 // Pulse pastes them. Only empty fields get filled; nothing she typed is replaced.
 const HEALTH_FIELDS = { bed: ['today', 'bedtime', fmtTime], wake: ['today', 'wake time', fmtTime], sleepMin: ['today', 'sleep', fmtSleep],
   rhr: ['today', 'resting HR', v => v + ' bpm'], hrv: ['today', 'HRV', v => v + ' ms'],
-  burned: ['yesterday', 'calories burned', v => fmt(v) + ' cal'], steps: ['yesterday', 'steps', v => fmt(v)] };
+  burned: ['yesterday', 'calories burned', v => fmt(v) + ' cal'], active: ['yesterday', 'active calories', v => fmt(v) + ' cal'],
+  resting: ['yesterday', 'resting calories', v => fmt(v) + ' cal'], steps: ['yesterday', 'steps', v => fmt(v)] };
 function applyHealth(h) {
   const t = dateStr(), y = addDays(t, -1);
   const recs = { today: { ...(db.get('days', t) || { id: t, date: t }) }, yesterday: { ...(db.get('days', y) || { id: y, date: y }) } };
@@ -585,30 +654,50 @@ function offerPaste() {
   b.innerHTML = '📋 Tap to add your Apple Health numbers';
   document.body.appendChild(b);
 }
+// Setup is one tiny step per screen, since the Shortcuts app is a lot to read at once.
+const HEALTH_TEXT = 'active: \nresting: \nsteps: \nrhr: ';
+const findSamples = (type, sum) => `<li>Tap <b>Search</b> at the bottom, type <b>Find Health Samples</b>, tap it</li>
+  <li>Tap <b>Type</b> → <b>${type}</b></li>
+  ${sum ? `<li>Tap <b>Add Filter</b> → set it to <b>Start Date is Yesterday</b></li>
+  <li>Search <b>Calculate Statistics</b>, tap it, set it to <b>Sum</b></li>` : `<li>Set <b>Sort by</b> Start Date, <b>Latest First</b>, <b>Limit</b> on, <b>1</b></li>`}`;
+const HEALTH_STEPS = [
+  { e: '⌚', t: 'Auto-fill from Apple Health', b: `<p class="hs-lead">One-time setup. About 5 minutes.</p><p class="muted small">Don't feel like it? Skip it and tap <b>✏️ Type it in</b> on the Recovery card. That works just as well.</p>` },
+  { e: '1️⃣', t: 'Make a new shortcut', b: `<ul class="hs"><li>Open the <b>Shortcuts</b> app</li><li>Tap <b>＋</b> in the top right</li><li>Tap the name at the top → <b>Rename</b> → <b>${SHORTCUT_NAME}</b></li></ul><button class="btn soft full" data-x="copy" data-v="${SHORTCUT_NAME}">📋 Copy the name</button>` },
+  { e: '🔥', t: 'Active calories', b: `<ul class="hs">${findSamples('Active Energy', true)}</ul>` },
+  { e: '😴', t: 'Resting calories', b: `<ul class="hs">${findSamples('Resting Energy', true)}</ul><p class="muted tiny">Same as the last step, just a different type.</p>` },
+  { e: '👟', t: 'Steps', b: `<ul class="hs">${findSamples('Steps', true)}</ul><p class="muted tiny">Same again.</p>` },
+  { e: '🫀', t: 'Resting heart rate', b: `<ul class="hs">${findSamples('Resting Heart Rate', false)}</ul>` },
+  { e: '📝', t: 'Put it together', b: `<ul class="hs"><li>Search <b>Text</b>, tap it</li><li>Paste this into the box:</li></ul><pre class="hs-pre">${HEALTH_TEXT}</pre>
+    <button class="btn soft full" data-x="copy" data-v="${HEALTH_TEXT}">📋 Copy this text</button>
+    <p class="small mt">Then tap right after each <b>:</b> and pick its blue bubble above the keyboard, top to bottom (same order as the steps you just did).</p>` },
+  { e: '✅', t: 'Last step', b: `<ul class="hs"><li>Search <b>Copy to Clipboard</b>, tap it</li><li>Tap <b>Done</b></li></ul><p class="hs-lead">That's it 🎉</p><p class="muted small">From now on: tap <b>⌚ Apple Health</b>, then <b>◀ Pulse</b> in the top-left corner, then the purple bar.</p>` },
+];
 function openHealthGuide() {
-  const s = openSheet({
-    title: 'Sync from Apple Health', full: true,
-    body: `<p class="small">Pulse can't read Apple Health on its own (Apple only allows that for App Store apps). An iPhone Shortcut grabs the numbers and Pulse pastes them in. You set it up once.</p>
-      <ol class="guide">
-        <li>Open the <b>Shortcuts</b> app, tap <b>＋</b>, and name the shortcut <b>${SHORTCUT_NAME}</b> (exactly that).</li>
-        <li><b>Resting heart rate:</b> add <b>Find Health Samples</b>. Type: Resting Heart Rate. Sort by Start Date, Latest First, Limit 1.</li>
-        <li><b>Sleep:</b> add another <b>Find Health Samples</b>. Type: Sleep Analysis. Filter: Start Date is in the last 16 hours. Sort by Start Date, Oldest First. If both Whoop and the Watch save sleep, also add a filter "Source is" and pick one.</li>
-        <li><b>Bedtime:</b> add <b>Get Details of Health Samples</b> → Start Date (use the sleep samples), then <b>Get Item from List</b> → First Item, then <b>Format Date</b> → Custom → <code>HH:mm</code>.</li>
-        <li><b>Wake time:</b> add <b>Get Details of Health Samples</b> → End Date (sleep samples again), then <b>Get Item from List</b> → Last Item, then <b>Format Date</b> → Custom → <code>HH:mm</code>.</li>
-        <li><b>Calories:</b> add <b>Find Health Samples</b> → Active Energy, Start Date is Yesterday, then <b>Calculate Statistics</b> → Sum. Do the same for <b>Resting Energy</b>.</li>
-        <li>Add a <b>Text</b> action and type these lines, putting each result from above after its label:
-          <pre>bed: (bedtime)
-wake: (wake time)
-rhr: (resting heart rate)
-active: (active energy sum)
-resting: (resting energy sum)</pre></li>
-        <li>Add <b>Copy to Clipboard</b> as the last step.</li>
-      </ol>
-      <p class="small"><b>Using it:</b> tap <b>⌚ Sync from Apple Health</b>. The shortcut runs, then tap <b>◀ Pulse</b> in the top-left corner to come back and tap the purple bar to add the numbers.</p>
-      <p class="muted tiny">Pulse only fills in blanks, so it never overwrites what you typed from Whoop. Missing numbers (like a night without your watch) are just left empty. You can also run the shortcut from the Shortcuts app, come back, and tap Paste below.</p>`,
-    footer: `<button class="btn ghost" data-x="paste">Paste</button><button class="btn primary grow" data-x="ready">${profile()?.healthReady ? 'Run it now' : "I've made the shortcut"}</button>`,
-  });
-  s.on('click', '[data-x="paste"]', () => { s.close(); healthPaste(); });
+  if (profile()?.healthReady) {
+    const s = openSheet({ title: '⌚ Apple Health',
+      body: `<p class="small">Runs your <b>${SHORTCUT_NAME}</b> shortcut, then brings the numbers back here.</p>`,
+      footer: `<button class="btn ghost" data-x="redo">Setup steps</button><button class="btn ghost" data-x="paste">Paste</button><button class="btn primary grow" data-x="run">Run it</button>` });
+    s.on('click', '[data-x="redo"]', () => { s.close(); saveProfile({ healthReady: false }); openHealthGuide(); });
+    s.on('click', '[data-x="paste"]', () => { s.close(); healthPaste(); });
+    s.on('click', '[data-x="run"]', () => { s.close(); healthSync(); });
+    return;
+  }
+  let i = 0;
+  const s = openSheet({ title: 'Apple Health', full: true, body: '<div id="hsb"></div>', footer: '<div id="hsf" class="btn-row grow"></div>' });
+  const show = () => {
+    const st = HEALTH_STEPS[i], last = i === HEALTH_STEPS.length - 1;
+    s.$('#hsb').innerHTML = `<div class="hs-dots">${HEALTH_STEPS.map((_, k) => `<i class="${k <= i ? 'on' : ''}"></i>`).join('')}</div>
+      <div class="hs-e">${st.e}</div><h2 class="hs-t">${st.t}</h2>${st.b}`;
+    s.$('.sheet-body').scrollTop = 0;
+    s.$('#hsf').innerHTML = i === 0
+      ? `<button class="btn ghost grow" data-x="skip">✏️ I'll type it</button><button class="btn primary grow" data-x="next">Let's go</button>`
+      : `<button class="btn ghost" data-x="back">Back</button><button class="btn primary grow" data-x="${last ? 'ready' : 'next'}">${last ? 'Try it now' : 'Done, next'}</button>`;
+  };
+  show();
+  s.on('click', '[data-x="next"]', () => { i++; show(); });
+  s.on('click', '[data-x="back"]', () => { i--; show(); });
+  s.on('click', '[data-x="skip"]', () => { s.close(); openBody(ui.date); });
+  s.on('click', '[data-x="copy"]', async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast('Copied'); } catch { toast("Couldn't copy. Type it instead."); } });
   s.on('click', '[data-x="ready"]', () => { saveProfile({ healthReady: true }); s.close(); healthSync(); });
 }
 
@@ -748,7 +837,7 @@ function cycleTrends() {
       ${periodShare(db.list('stomach'), 'stomach logs')}
       ${periodShare(db.list('feel'), 'feeling-off check-ins')}
     </div>
-    ${!c.avg ? `<p class="muted small">Log a couple of periods and this will show your usual cycle length.</p>` : ''}
+    ${!c.avg ? `<p class="muted small">Shows your usual cycle after a couple of periods.</p>` : ''}
     ${feelTop.length ? `<p class="small">Usually: ${feelTop.map(([k, n]) => { const f = PERIOD_FEELS.find(x => x[0] === k); return `<b>${f[2].toLowerCase()}</b> (${n})`; }).join(', ')}</p>` : ''}
   </section>`;
 }
@@ -771,7 +860,7 @@ const nOn = k => profile()?.[k] ?? NOTIFS.find(n => n[0] === k)[3];
 function notifyItems() {
   const t = dateStr(), items = [];
   // Easter egg: no setting for this one.
-  items.push({ id: 'wish', at: '11:11', ttl: 60, close: 60, title: '11:11', body: 'Make a wish ✨' });
+  items.push({ id: 'wish', at: '11:11', ttl: 60, close: 60, title: '11:11', body: '🌠' });
   if (nOn('n_bed')) for (let i = 0; i < 8; i++) {
     const d = addDays(t, i), b = bedGoal(d), at = fromMin(toMin(b) - 30);
     if (i > 0 || at > timeStr()) items.push({ id: 'bed-' + d, date: d, at, ttl: 1800, title: '🌙 Bedtime in 30 min', body: `Bed by ${fmtTime(b)} to get your sleep in.` });
@@ -839,7 +928,7 @@ function wishCheck() {
   const el = $('.wish-bar'), show = timeStr() === '11:11' && ui.wishGone !== dateStr();
   if (show && !el) {
     const b = document.createElement('button');
-    b.className = 'wish-bar'; b.textContent = '✨ 11:11. Make a wish';
+    b.className = 'wish-bar'; b.textContent = '🌠 11:11';
     b.onclick = () => { ui.wishGone = dateStr(); b.remove(); };
     document.body.appendChild(b);
   } else if (!show && el) el.remove();
@@ -856,10 +945,10 @@ function readiness(date) {
   const prev = db.get('days', addDays(date, -1)) || {}, game = gameOn(date);
   const facts = [rec != null && `💚 ${rec}% recovery`, day.sleepMin != null && `😴 ${fmtSleep(day.sleepMin)} of ${fmtSleep(need)} needed`, prev.strain != null && `⚡ ${prev.strain} strain yesterday`].filter(Boolean);
   const L = [
-    { cls: 'red', t: 'Take it easier', d: "Do what's planned, skip the extras, and recover hard today: fuel, fluids, early bed." },
-    { cls: 'yellow', t: 'Steady', d: "Normal day. Train like usual, just don't go looking for extra." },
+    { cls: 'red', t: 'Take it easier', d: 'Skip the extras. Fuel, fluids, early bed.' },
+    { cls: 'yellow', t: 'Steady', d: 'Normal day. No need for extra.' },
     { cls: 'green', t: 'Ready to go', d: 'Good day to push it.' }][level];
-  return { ...L, facts, game: game && !game.result ? `🏀 Game day: carbs at every meal and a gluten-free snack 2 to 3 hours before tip-off.` : '' };
+  return { ...L, facts, game: game && !game.result ? `🏀 Carbs every meal + a GF snack 2–3 hrs before tip.` : '' };
 }
 function readinessCard(date) {
   if (date !== dateStr()) return '';
@@ -897,11 +986,11 @@ function weekCard(date) {
   const w = weekStats(range), g = goals();
   if (!w.foodDays && !w.sleepN) return '';
   const good = [], tryNext = [];
-  if (w.bedN && w.nearBed >= w.bedN - 1) good.push(`On your bedtime plan ${w.nearBed} of ${w.bedN} nights`); else if (w.bedN) tryNext.push(`Only ${w.nearBed} of ${w.bedN} nights near your bedtime plan. Start winding down when the 30-minute reminder hits.`);
-  if (w.foodDays && w.protein >= w.foodDays - 1) good.push(`Hit protein ${w.protein} of ${w.foodDays} days`); else if (w.foodDays) tryNext.push(`Protein goal hit ${w.protein} of ${w.foodDays} days. A shake or Greek yogurt after practice closes most of the gap.`);
-  if (w.cal != null && w.cal < g.cal * 0.9) tryNext.unshift(`Averaged ${fmt(w.cal)} cal, under your ${fmt(g.cal)} goal. On heavy days, add a meal-prep container or a snack.`);
+  if (w.bedN && w.nearBed >= w.bedN - 1) good.push(`On your bedtime plan ${w.nearBed} of ${w.bedN} nights`); else if (w.bedN) tryNext.push(`Bed on plan ${w.nearBed} of ${w.bedN} nights. Wind down at the 30-min reminder.`);
+  if (w.foodDays && w.protein >= w.foodDays - 1) good.push(`Hit protein ${w.protein} of ${w.foodDays} days`); else if (w.foodDays) tryNext.push(`Protein hit ${w.protein} of ${w.foodDays} days. Add a shake after practice.`);
+  if (w.cal != null && w.cal < g.cal * 0.9) tryNext.unshift(`Averaged ${fmt(w.cal)} cal, under your ${fmt(g.cal)} goal. Add a snack on heavy days.`);
   if (!w.stomach && w.foodDays >= 4) good.push('No stomach trouble all week');
-  if (w.sleep != null && w.sleep >= sleepGoal() - 10) good.push(`Averaged ${fmtSleep(w.sleep)} of sleep`); else if (w.sleep != null) tryNext.push(`Averaged ${fmtSleep(w.sleep)} of sleep, under your ${fmtSleep(sleepGoal())} goal.`);
+  if (w.sleep != null && w.sleep >= sleepGoal() - 10) good.push(`Averaged ${fmtSleep(w.sleep)} of sleep`); else if (w.sleep != null) tryNext.push(`Sleep averaged ${fmtSleep(w.sleep)}, goal is ${fmtSleep(sleepGoal())}.`);
   if (w.water < 4 && w.foodDays >= 4) tryNext.push(`Hit your water goal ${w.water} of 7 days.`);
   const short = d => parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   return `<section class="card week-card"><button class="pr-x" data-act="weekDone" data-d="${range[1]}" aria-label="Close">✕</button>
@@ -949,7 +1038,7 @@ function recoveryHelpers() {
 function recoveryCard() {
   const h = recoveryHelpers();
   return `<section class="card gut-trends"><div class="card-head"><h3>💚 What helps you recover</h3></div>
-    ${h.rows < 8 ? `<p class="muted small">Once you've logged recovery for a couple of weeks (plus food, water and sleep), this shows what the nights before your best mornings had in common.</p>`
+    ${h.rows < 8 ? `<p class="muted small">Shows up after about 2 weeks of logging.</p>`
       : h.list.length ? `<div class="facts">${h.list.slice(0, 4).map(x => `<div class="fact"><span>✅</span><div><b>${x.label}</b><div class="muted small">${x.yes}% recovery the next morning vs ${x.no}% when you didn't</div></div></div>`).join('')}</div>
         <p class="muted tiny">From ${h.rows} mornings. Patterns, not proof.</p>`
       : `<p class="small">No clear pattern yet. Keep logging and check back.</p>`}
@@ -995,7 +1084,7 @@ function askContext() {
     }
     if (day.water) parts.push(`water ${day.water} oz`);
     if (day.sleepMin != null || day.bed) parts.push(`slept ${day.sleepMin != null ? fmtSleep(day.sleepMin) : '?'}${day.bed ? ` (bed ${day.bed}, up ${day.wake || '?'})` : ''}`);
-    const w = [day.recovery != null && `recovery ${day.recovery}%`, day.hrv != null && `HRV ${day.hrv}`, day.rhr != null && `RHR ${day.rhr}`, day.strain != null && `strain ${day.strain}`, day.burned != null && `burned ${day.burned}`, day.steps != null && `steps ${day.steps}`].filter(Boolean);
+    const w = [day.recovery != null && `recovery ${day.recovery}%`, day.hrv != null && `HRV ${day.hrv}`, day.rhr != null && `RHR ${day.rhr}`, day.strain != null && `strain ${day.strain}`, day.burned != null && `burned ${day.burned}`, day.active != null && `active cal ${day.active}`, day.resting != null && `resting cal ${day.resting}`,day.steps != null && `steps ${day.steps}`].filter(Boolean);
     if (w.length) parts.push(w.join(', '));
     if (actsOf(day).length) parts.push(`training: ${actsOf(day).join(', ')}`);
     const gm = gameOn(d); if (gm) parts.push(`GAME ${vsAt(gm)} ${gm.opp}${gm.result ? ` ${gm.result}` : ''}`);
@@ -1014,7 +1103,18 @@ function askBar() {
   return `<section class="card ask-bar"><button class="ask-open" data-act="ask"><span>✨</span><span class="grow">Ask Pulse anything about you</span></button>
     <div class="ask-ideas">${ASK_IDEAS.slice(0, 3).map(q => `<button class="pr-tag" data-act="ask" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div></section>`;
 }
-const fmtAnswer = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+// Bold headline, then bullets, so answers read at a glance.
+function fmtAnswer(t) {
+  const bold = x => esc(x).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  let out = '', list = [];
+  const flush = () => { if (list.length) out += `<ul>${list.map(l => `<li>${bold(l)}</li>`).join('')}</ul>`; list = []; };
+  String(t).split(/\n+/).map(l => l.trim()).filter(Boolean).forEach(l => {
+    const b = l.match(/^(?:[-*•]|\d+[.)])\s+(.*)/);
+    if (b) list.push(b[1]); else { flush(); out += `<p>${bold(l)}</p>`; }
+  });
+  flush();
+  return out;
+}
 function openAsk(q = '') {
   ui.chat ||= [];
   const s = openSheet({
@@ -1052,7 +1152,7 @@ function openAsk(q = '') {
 function journalCard(day) {
   return `<section class="card tap" data-act="journal">
     <div class="card-head"><h3>📓 Journal <span class="lock">🔒</span></h3><span class="link">${day.notes ? 'Edit' : 'Write'}</span></div>
-    ${day.notes ? `<p class="journal-txt">${esc(day.notes)}</p>` : `<p class="muted small">How practice went, soreness, mood, anything on your mind. Just for you.</p>`}
+    ${day.notes ? `<p class="journal-txt">${esc(day.notes)}</p>` : `<p class="muted small">Practice, mood, anything. Just for you.</p>`}
     <button class="talk-btn" data-act="journalTalk">🎙️ Talk instead of typing</button>
   </section>`;
 }
@@ -1201,7 +1301,6 @@ function waterCard(day, g) {
 function bodyCard(d) {
   const items = [
     ['🫀', 'Resting HR', d.rhr != null ? d.rhr + ' bpm' : null],
-    ['🔥', 'Burned', d.burned != null ? fmt(d.burned) + ' cal' : null],
     ['💚', 'Recovery', d.recovery != null ? d.recovery + '%' : null],
     ['⚡', 'Strain', d.strain != null ? d.strain : null],
     ['💓', 'HRV', d.hrv != null ? d.hrv + ' ms' : null],
@@ -1209,11 +1308,15 @@ function bodyCard(d) {
     ['⚖️', 'Weight', d.weight != null && profile()?.showWeight ? d.weight + ' lb' : null],
     ['🔋', 'Energy', d.energy ? d.energy + '/5' : null],
   ].filter(i => i[2] != null);
-  return `<section class="card tap" data-act="body">
-    <div class="card-head"><h3>⌚ Recovery</h3><span class="link">${items.length ? 'Edit' : 'Log'}</span></div>
-    ${items.length ? `<div class="stat-grid">${items.map(i => `<div class="stat"><span class="stat-ico">${i[0]}</span><div><div class="stat-v">${esc(i[2])}</div><div class="stat-l">${i[1]}</div></div></div>`).join('')}</div>`
-    : `<p class="muted small">Heart rate, calories burned, recovery and strain from your Whoop or Apple Watch, all in one place.</p>`}
-    <button class="btn soft full mt health-btn" data-act="healthSync">⌚ Sync from Apple Health</button>
+  const burn = d.burned ?? (d.active != null && d.resting != null ? d.active + d.resting : null);
+  return `<section class="card body-card">
+    <div class="card-head"><h3>⌚ Recovery</h3><button class="link" data-act="body">${items.length || burn != null ? 'Edit' : ''}</button></div>
+    <button class="burn" data-act="body">
+      <div class="burn-total"><b>${burn != null ? fmt(burn) : '–'}</b><span>🔥 cal burned</span></div>
+      <div class="burn-split"><div><b>${d.active != null ? fmt(d.active) : '–'}</b><span>active</span></div><div><b>${d.resting != null ? fmt(d.resting) : '–'}</b><span>resting</span></div></div>
+    </button>
+    ${items.length ? `<div class="stat-grid tap" data-act="body">${items.map(i => `<div class="stat"><span class="stat-ico">${i[0]}</span><div><div class="stat-v">${esc(i[2])}</div><div class="stat-l">${i[1]}</div></div></div>`).join('')}</div>` : ''}
+    <div class="btn-row mt"><button class="btn primary grow" data-act="body">✏️ Type it in</button><button class="btn soft grow" data-act="healthSync">⌚ Apple Health</button></div>
   </section>`;
 }
 
@@ -1224,7 +1327,6 @@ function gutCard(date) {
     ${eps.map(e => { const s = SEVERITY[e.severity - 1] || SEVERITY[2]; return `<button class="entry" data-act="editGut" data-id="${e.id}">
       <div class="e-main"><div class="e-name">${s.e} ${s.t} · ${fmtTime(e.time)}</div><div class="e-sub">${esc((e.symptoms || []).join(', ') || 'No symptoms picked')}</div></div><div class="chev">›</div></button>`; }).join('')}
     <button class="gut-btn" data-act="gut">Log stomach symptoms</button>
-    ${!eps.length ? `<p class="muted small center">Log it when your stomach hurts. After a few logs, Trends shows which foods might be causing it.</p>` : ''}
   </section>`;
 }
 
@@ -1235,7 +1337,6 @@ function feelCard(date) {
     ${logs.map(e => { const l = OFF_LEVELS[e.level - 1] || OFF_LEVELS[1]; return `<button class="entry" data-act="editFeel" data-id="${e.id}">
       <div class="e-main"><div class="e-name">${l.e} ${l.t} · ${fmtTime(e.time)}</div><div class="e-sub">${esc((e.feelings || []).join(', ') || 'Just off')}</div></div><div class="chev">›</div></button>`; }).join('')}
     <button class="feel-btn" data-act="feel">Feeling off? Log it</button>
-    ${!logs.length ? `<p class="muted small center">Not feeling right? Log it and see what might be causing it.</p>` : ''}
   </section>`;
 }
 
@@ -1410,7 +1511,7 @@ function weekAvg(all, date) {
 function weightCard(dates, labels) {
   const all = weighIns(), inRange = all.filter(d => d.id >= dates[0]);
   const head = `<div class="card-head"><h3>⚖️ Body weight</h3><button class="pill-btn sm" data-act="logWeight">＋ Log weight</button></div>`;
-  if (!all.length) return `<section class="card">${head}<p class="muted small">Weigh in a few mornings a week: same scale, after the bathroom, before eating. Pulse draws a 7-day average so normal day-to-day swings don't throw you off.</p></section>`;
+  if (!all.length) return `<section class="card">${head}<p class="muted small">Weigh in a few mornings a week. Pulse shows a 7-day average, so daily swings don't matter.</p></section>`;
   const last = all[all.length - 1];
   const raw = dates.map(d => db.get('days', d)?.weight ?? null);
   const avg = dates.map(d => all.some(x => x.id <= d && x.id > addDays(d, -7)) ? weekAvg(all, d) : null);
@@ -1421,7 +1522,7 @@ function weightCard(dates, labels) {
       <div><b>${change == null ? '–' : (change > 0 ? '+' : '') + r1(change)}</b><span>change this range</span></div></div>
     ${inRange.length >= 2 ? lineChart({ series: [{ values: raw, color: 'var(--lav-2)' }, { values: avg, color: 'var(--purple-3)' }], labels, fmtY: x => Math.round(x) })
       + `<div class="legend"><span><i class="dot" style="background:var(--lav-2)"></i>Weigh-ins</span><span><i class="dot" style="background:var(--purple-3)"></i>7-day average</span></div>` : ''}
-    <p class="muted tiny">Weight can move 2–4 lb in a day from water, salt and training. The average line is the one to watch.</p>
+    <p class="muted tiny">Daily swings are normal. Watch the average line.</p>
   </section>`;
 }
 function openWeight(date = dateStr()) {
@@ -1455,7 +1556,7 @@ function gutTrends(dates) {
     ${sym.size ? `<p class="small">Most common: ${[...sym.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(s => `<b>${esc(s[0])}</b> (${s[1]})`).join(', ')}</p>` : ''}
     ${gutTiming(all)}
     ${periodShare(all, 'stomach logs') ? `<div class="facts">${periodShare(all, 'stomach logs')}</div>` : ''}
-    ${a.episodes < 3 ? `<p class="muted small">Log at least 3 stomach episodes (and keep logging food) and this will start pointing out possible trigger foods.</p>` : `
+    ${a.episodes < 3 ? `<p class="muted small">After 3 stomach logs, this points out possible trigger foods.</p>` : `
       <div class="win">Look at food eaten within
         ${[4, 12, 24].map(w => `<button class="chip sm ${ui.gutWindow === w ? 'on' : ''}" data-act="gutWin" data-w="${w}">${w}h</button>`).join('')} before it hurt</div>
       <p class="muted small">Normally, ${pct(a.base)} of what you eat is followed by stomach trouble within ${ui.gutWindow}h.</p>
@@ -1500,7 +1601,7 @@ function feelTrends(dates) {
   const all = db.list('feel');
   const inRange = all.filter(e => e.date >= dates[0]);
   if (!all.length) return `<section class="card"><div class="card-head"><h3>😵‍💫 Feeling off</h3></div>
-    <p class="muted small">When you feel dizzy, drained or just off, log it from the Today screen. After a few check-ins this compares your off days with normal days to show what's different.</p></section>`;
+    <p class="muted small">Feeling off? Log it on Today. After a few, this shows what's different on those days.</p></section>`;
   const fc = new Map();
   inRange.forEach(e => (e.feelings || []).forEach(f => fc.set(f, (fc.get(f) || 0) + 1)));
   const offDates = new Set(all.map(e => e.date));
@@ -1537,7 +1638,7 @@ function screenMe() {
     <section class="card profile">
       <div class="avatar">${esc(firstName()[0]?.toUpperCase() || '?')}</div>
       <div class="grow"><input class="name-in" value="${esc(p.name || '')}" placeholder="Your name" data-change="name" aria-label="Your name">
-      <div class="muted small">${cloud ? esc(cloud.email) : '🔒 Private. Stays on this phone. Ask Pulse only reads it when you ask.'}</div></div>
+      <div class="muted small">${cloud ? esc(cloud.email) : '🔒 Private. Stays on this phone.'}</div></div>
     </section>
 
     <section class="card">
@@ -1639,6 +1740,7 @@ const acts = {
   logWeight: () => openWeight(),
   ask: d => openAsk(d.q || ''),
   weekDone: d => saveProfile({ ['weekSeen-' + d.d]: true }),
+  jump: d => { const el = $('.card.' + d.to); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } },
 };
 const inputs = {
   foodQ: el => { ui.foodQ = el.value; $('#foodList').innerHTML = foodListHTML(); },
@@ -2224,13 +2326,30 @@ function openBody(date) {
         ${fld('sleepPerf', 'Sleep performance', '%')}
       </div>
       <p class="muted tiny">Leave hours blank and Pulse works them out from bed and wake time. If your Whoop shows actual time asleep, type that in instead.</p>
+      <h4 class="sec">🔥 Calories burned</h4>
+      <div class="cal3">${fld('active', 'Active', 'cal')}${fld('resting', 'Resting', 'cal')}${fld('burned', 'Total', 'cal')}</div>
+      <p class="muted tiny" id="calHint">Fill in any two and Pulse does the math.</p>
       <h4 class="sec">⌚ Whoop / Apple Watch</h4>
-      <div class="grid2">${fld('rhr', 'Resting HR', 'bpm')}${fld('burned', 'Calories burned', 'cal')}${fld('recovery', 'Recovery', '%')}${fld('strain', 'Strain', '/21')}${fld('hrv', 'HRV', 'ms')}${fld('steps', 'Steps', '')}</div>
+      <div class="grid2">${fld('recovery', 'Recovery', '%')}${fld('strain', 'Strain', '/21')}${fld('rhr', 'Resting HR', 'bpm')}${fld('hrv', 'HRV', 'ms')}${fld('steps', 'Steps', '')}</div>
       <h4 class="sec">🔋 How do you feel?</h4>
       <div class="chips energy">${[1, 2, 3, 4, 5].map(v => `<button class="chip ${energy === v ? 'on' : ''}" data-x="en" data-v="${v}">${['😴', '😕', '🙂', '😃', '🔥'][v - 1]} ${v}</button>`).join('')}</div>`,
     footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
   });
   s.on('click', '[data-x="en"]', el => { const v = +el.dataset.v; energy = energy === v ? 0 : v; s.$$('[data-x="en"]').forEach(b => b.classList.toggle('on', +b.dataset.v === energy)); });
+  // Active + resting = total: whichever two she types, the third fills itself.
+  const cal = k => s.$(`[data-k="${k}"]`), CAL = ['active', 'resting', 'burned'];
+  CAL.forEach(k => { if (d[k] != null) cal(k).dataset.typed = '1'; });
+  if (CAL.every(k => d[k] != null) && d.active + d.resting === d.burned) cal('burned').dataset.typed = '';
+  s.$$('.cal3 input').forEach(i => i.addEventListener('input', () => {
+    i.dataset.typed = i.value.trim() ? '1' : '';
+    i.classList.remove('auto');
+    const typed = CAL.filter(k => cal(k).dataset.typed), left = CAL.find(k => !typed.includes(k));
+    if (typed.length !== 2) { s.$$('.cal3 input.auto').forEach(x => { x.value = ''; x.classList.remove('auto'); }); return; }
+    const [a, r, t] = CAL.map(k => optNum(cal(k).value));
+    const v = left === 'burned' ? a + r : left === 'active' ? t - r : t - a;
+    cal(left).value = v > 0 ? Math.round(v) : '';
+    cal(left).classList.toggle('auto', v > 0);
+  }));
   s.on('click', '[data-x="save"]', () => {
     s.$$('[data-k]').forEach(i => { d[i.dataset.k] = optNum(i.value); });
     const h = optNum(s.$('#sh').value), m = optNum(s.$('#sm').value);
@@ -2677,7 +2796,7 @@ function splash(first) {
   const todayCal = sumMacros(dayEntries(t).map(e => e.macros)).cal;
   const now = timeStr(), num = profile()?.number, gm = gameOn(t);
   const note = first ? 'Tap ＋ to log your first meal'
-    : now === '11:11' ? "✨ It's 11:11. Make a wish"
+    : now === '11:11' ? '🌠 11:11'
     : recentWin(t) ? `🏆 Congrats on the win ${vsAt(recentWin(t))} ${esc(recentWin(t).opp)}!`
     : gm ? `🏀 Game day ${vsAt(gm)} ${esc(gm.opp)} · ${gameTime(gm)}`
     : n >= 2 ? `🔥 ${n} days logged in a row`

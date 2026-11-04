@@ -116,7 +116,9 @@ export async function seedDemo() {
     const day = { id: d, date: d };
     if (rnd() > 0.08) Object.assign(day, { bed: hm(bedM), wake: hm(wakeM), sleepMin, sleepPerf: Math.round(between(78, 97)) });
     if (rnd() > 0.15) Object.assign(day, { recovery, hrv: Math.round(between(68, 98)), rhr: Math.round(between(49, 56)) });
-    if (!isToday && rnd() > 0.15) Object.assign(day, { strain: Math.round(between(game ? 15 : rest ? 5 : 10, game ? 19 : rest ? 9 : 16) * 10) / 10, burned: Math.round(between(rest ? 2200 : 2700, rest ? 2500 : 3300)), steps: Math.round(between(7000, 15000)) });
+    if (!isToday && rnd() > 0.15) Object.assign(day, { strain: Math.round(between(game ? 15 : rest ? 5 : 10, game ? 19 : rest ? 9 : 16) * 10) / 10, resting: Math.round(between(1500, 1600)), active: Math.round(between(rest ? 600 : 1100, rest ? 900 : 1700)), steps: Math.round(between(7000, 15000)) });
+    if (isToday) Object.assign(day, { active: 640, resting: 1050 });
+    if (day.active != null) day.burned = day.active + day.resting;
     day.water = isToday ? 48 : Math.round(between(64, 112) / 8) * 8;
     lowWater = day.water < 100;
     if ([1, 3, 5].includes(dow)) day.weight = Math.round((152 + between(-1.5, 1.5)) * 10) / 10;

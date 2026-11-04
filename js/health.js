@@ -47,6 +47,8 @@ export function parseHealth(text) {
     rhr: within(round(number(raw.rhr ?? raw.resting_hr)), 30, 120),
     hrv: within(round(number(raw.hrv)), 5, 250),
     burned: within(round(burned), 500, 9000),
+    active: round(active),
+    resting: round(resting),
     steps: within(round(number(raw.steps)), 0, 90000),
   };
   return Object.values(out).some(v => v != null) ? out : null;

@@ -149,7 +149,8 @@ const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
 const SYSTEM = `You are Pulse, the assistant inside a college athlete's personal health app. You can see everything she has logged (below).
 How to answer:
 - Use her data. Be specific: name dates, times and numbers. Compare to her goals and to her usual.
-- Keep it short: 2 to 5 sentences, or a few bullets. Plain, warm, direct, like a smart teammate. No filler, no "As an AI", no disclaimers unless something medical comes up.
+- Format, always: line 1 is the answer in one short sentence wrapped in **bold**. Then 2 to 4 bullets, each starting with "- " and under 15 words. Under 60 words total. Never write a paragraph. She reads this on her phone between classes.
+- Plain, warm, direct, like a smart teammate. No filler, no "As an AI", no disclaimers unless something medical comes up.
 - If the data needed isn't logged, say what's missing and what to log.
 - For stomach questions, trust the stomach analysis lines: foods she eats almost every day are not suspects unless listed as standing out. Weigh period timing, team meals or food she didn't make (gluten cross-contact), stress and food types like sugar alcohols or caffeine.
 - General sports nutrition, sleep and recovery tips are fine. Every food suggestion must be gluten-free (she has celiac).
@@ -167,7 +168,7 @@ async function ask(req, env) {
     .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 2000) })).filter(m => m.content);
   if (!messages.length || messages[messages.length - 1].role !== 'user') return json({ error: 'no question' }, 400);
   try {
-    const r = await env.AI.run(MODEL, { messages: [{ role: 'system', content: SYSTEM + context }, ...messages], max_tokens: 700, temperature: 0.4 });
+    const r = await env.AI.run(MODEL, { messages: [{ role: 'system', content: SYSTEM + context }, ...messages], max_tokens: 350, temperature: 0.4 });
     return json({ answer: String(r?.response || '').trim() });
   } catch (e) {
     return json({ error: 'busy', detail: String(e?.message || e).slice(0, 200) }, 503);
