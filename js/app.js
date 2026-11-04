@@ -9,6 +9,8 @@ import { drawSummary } from './share-image.js';
 import { GAMES, gameOn, nextGame, teamLogo } from './games.js';
 import { parseHealth, SHORTCUT_NAME } from './health.js';
 import * as notify from './notify.js';
+import { CONFIG } from '../config.js';
+const CONFIG_PUSH = () => CONFIG.PUSH_URL.replace(/\/$/, '');
 
 // ---------- constants ----------
 const MEALS = [
@@ -296,6 +298,7 @@ function screenToday() {
   const left = g.cal - t.cal;
   return `
   <header class="top today-top">
+    <button class="ask-pill" data-act="ask" aria-label="Ask Pulse">✨ Ask</button>
     <div class="hello">${greeting()}, ${esc(firstName())}</div>
     <div class="datenav">
       <button class="dn-btn" data-act="day" data-n="-1" aria-label="Previous day">‹</button>
@@ -317,6 +320,8 @@ function screenToday() {
     <div class="mbs">${macroBar('Protein', 'p', t.p, g.p)}${macroBar('Carbs', 'c', t.c, g.c)}${macroBar('Fat', 'f', t.f, g.f)}</div>
   </section>
   ${winCard(d)}
+  ${readinessCard(d)}
+  ${weekCard(d)}
   ${gameBanner(d)}
   ${activityRow(d, day)}
   ${gfPrompt()}
@@ -325,6 +330,7 @@ function screenToday() {
   ${waterCard(day, g)}
   ${sleepCard(d, day)}
   ${bodyCard(day)}
+  ${profile()?.showWeight ? weightCard(Array.from({ length: 30 }, (_, i) => addDays(d, i - 29)), Array.from({ length: 30 }, (_, i) => { const x = parseDate(addDays(d, i - 29)); return `${x.getMonth() + 1}/${x.getDate()}`; })) : ''}
   ${medsCard(d, day)}
   ${feelCard(d)}
   ${gutCard(d)}
@@ -423,15 +429,30 @@ const sleepGoal = () => profile()?.sleepGoal || 540;
 const wakeUsual = dow => profile()?.wakeByDay?.[dow] || (dow === 0 || dow === 6 ? '07:00' : '06:00');
 // Wake time on the morning of `date`.
 const wakeOn = date => db.get('days', date)?.planWake || wakeUsual(parseDate(date).getDay());
+// Sleep coach: how much sleep the night starting on `date` calls for. Her goal,
+// plus more after a hard day, before a game, or after a few short nights.
+function sleepNeed(date) {
+  const base = sleepGoal(), day = db.get('days', date) || {}, acts = actsOf(day), why = [];
+  let need = base;
+  if (day.strain >= 17) { need += 45; why.push('very hard day'); }
+  else if (day.strain >= 14 || (acts.includes('practice') && acts.includes('weights'))) { need += 30; why.push('hard day'); }
+  else if (gameOn(date)) { need += 30; why.push('game today'); }
+  if (gameOn(addDays(date, 1))) { need += 30; why.push('game tomorrow'); }
+  // Only nights well under her goal count as debt; she earns back up to half an hour.
+  const last = [0, 1, 2].map(i => db.get('days', addDays(date, -i))?.sleepMin).filter(x => x != null);
+  const debt = last.reduce((a, x) => a + (base - x > 30 ? base - x : 0), 0);
+  if (last.length >= 2 && debt >= 60) { need += 30; why.push('short nights lately'); }
+  return { min: Math.min(need, base + 45), why };
+}
 // Plan for the night that starts on `date`.
 function bedPlan(date) {
-  const wake = wakeOn(addDays(date, 1));
-  let bed = toMin(wake) - sleepGoal() + (toMin(wake) < 360 ? 1440 : 0), why = '';
+  const wake = wakeOn(addDays(date, 1)), need = sleepNeed(date);
+  let bed = toMin(wake) - need.min + (toMin(wake) < 360 ? 1440 : 0), why = '';
   const g = gameOn(date);
   if (g?.time && g.time >= '15:00') { const after = toMin(g.time) + 210; if (after > bed) { bed = after; why = 'game'; } }
   const set = db.get('days', date)?.planBed;
   if (set) { bed = toMin(set); why = 'set'; }
-  return { bed: fromMin(bed), wake, why, sleep: toMin(wake) + (toMin(wake) < 360 ? 1440 : 0) - bed };
+  return { bed: fromMin(bed), wake, why, need, sleep: toMin(wake) + (toMin(wake) < 360 ? 1440 : 0) - bed };
 }
 const bedGoal = (date = dateStr()) => bedPlan(date).bed;
 // A logged bedtime on day D's record is the night before D.
@@ -463,10 +484,10 @@ function sleepCard(date, day) {
 }
 
 function tonightRow(date, p) {
-  const short = p.sleep < sleepGoal() - 15;
+  const short = p.sleep < p.need.min - 15;
   return `<button class="tonight" data-act="sleepPlan" data-d="${date}">
     <span class="grow">${date === dateStr() ? 'Tonight' : fmtDay(date)}: bed by <b>${fmtTime(p.bed)}</b> · up at ${fmtTime(p.wake)}
-    <div class="muted tiny">${p.why === 'game' ? `🏀 Game night, so a bit later. ` : ''}${short ? `${fmtSleep(p.sleep)} of sleep, under your ${fmtSleep(sleepGoal())} goal` : `${fmtSleep(p.sleep)} of sleep`}</div></span>
+    <div class="muted tiny">${p.why === 'game' ? `🏀 Game night, so a bit later. ` : ''}Sleep need ${fmtSleep(p.need.min)}${p.need.why.length ? ` (${p.need.why.join(', ')})` : ''}${short ? `, you'll get ${fmtSleep(p.sleep)}` : ''}</div></span>
     <span class="link">Change</span></button>`;
 }
 function openSleepPlan(date) {
@@ -477,7 +498,7 @@ function openSleepPlan(date) {
         <div class="field"><label>Wake up ${parseDate(tom).toLocaleDateString(undefined, { weekday: 'long' })}</label><input type="time" id="pw" value="${wakeOn(tom)}"></div>
         <div class="field"><label>Bed by</label><input type="time" id="pb" value="${bedGoal(date)}"></div></div>
       <p class="muted small" id="pinfo"></p>
-      <p class="muted tiny">Pulse works back from your wake-up time to get you ${fmtSleep(sleepGoal())} (change that in Me). Late class, weekend, something came up? Change either one. It only affects this night.</p>
+      <p class="muted tiny">Pulse works back from your wake-up time to get you ${fmtSleep(sleepNeed(date).min)} tonight. That's your ${fmtSleep(sleepGoal())} goal plus extra after hard days, before games or after short nights. Late class, weekend, something came up? Change either one. It only affects this night.</p>
       ${dd.planBed || td.planWake ? `<button class="btn ghost full" data-x="reset">Back to usual</button>` : ''}`,
     footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
   });
@@ -486,7 +507,7 @@ function openSleepPlan(date) {
     const w = toMin(s.$('#pw').value || wakeOn(tom)), b = toMin(s.$('#pb').value || bedGoal(date));
     s.$('#pinfo').textContent = `That's ${fmtSleep(w + (w < 360 ? 1440 : 0) - b)} of sleep.`;
   };
-  s.on('input', '#pw', () => { if (!bedTouched) { const w = toMin(s.$('#pw').value); s.$('#pb').value = fromMin(w + (w < 360 ? 1440 : 0) - sleepGoal()); } info(); });
+  s.on('input', '#pw', () => { if (!bedTouched) { const w = toMin(s.$('#pw').value); s.$('#pb').value = fromMin(w + (w < 360 ? 1440 : 0) - sleepNeed(date).min); } info(); });
   s.on('input', '#pb', () => { bedTouched = true; info(); });
   s.on('click', '[data-x="reset"]', () => { delete dd.planBed; delete td.planWake; db.put('days', dd); db.put('days', td); s.close(); toast('Back to your usual'); });
   s.on('click', '[data-x="save"]', () => {
@@ -736,6 +757,7 @@ function cycleTrends() {
 // A short list on purpose: at most a few a day, nothing after bedtime.
 const NOTIFS = [
   ['n_bed', '🌙 Bedtime', "30 minutes before that night's planned bedtime.", true],
+  ['n_week', '📊 Weekly recap', 'Sunday at 6 PM, when your week card is ready.', true],
   ['n_win', '🏆 Wins', 'A congrats right after the Pilots win.', true],
   ['n_game', '🏀 Game days', 'The morning of each game, with who you play and when.', true],
   ['n_prep', '🥡 Meal prep', "Once, when you're down to your last container.", true],
@@ -756,6 +778,7 @@ function notifyItems() {
   }
   if (nOn('n_game')) GAMES.filter(g => g.date >= t).slice(0, 10).forEach(g =>
     items.push({ id: 'game-' + g.date, date: g.date, at: g.time && g.time < '12:00' ? hmMinus(g.time, 180) : '09:00', ttl: 10800, title: '🏀 Game day', body: `${vsAt(g)} ${g.opp} · ${gameTime(g)}` }));
+  if (nOn('n_week')) { const dow = parseDate(t).getDay(), sun = addDays(t, (7 - dow) % 7); items.push({ id: 'week-' + sun, date: sun, at: '18:00', ttl: 10800, title: '📊 Your week', body: 'Sleep, recovery and fueling, all in one card.' }); }
   const meds = medList();
   if (nOn('n_meds') && meds.length) {
     const taken = db.get('days', t)?.meds || {}, am = meds.filter(m => medWhen(m) !== 'Night'), pm = meds.filter(m => medWhen(m) === 'Night');
@@ -822,6 +845,208 @@ function wishCheck() {
   } else if (!show && el) el.remove();
 }
 setInterval(wishCheck, 5000);
+
+// ---------- readiness (Whoop-style "how hard to go today") ----------
+function readiness(date) {
+  const day = db.get('days', date) || {}, need = sleepNeed(addDays(date, -1)).min;
+  if (day.recovery == null && day.sleepMin == null) return null;
+  const rec = day.recovery, pct = day.sleepMin != null ? day.sleepMin / need : null;
+  let level = rec != null ? (rec >= 67 ? 2 : rec >= 34 ? 1 : 0) : pct >= 0.95 ? 2 : pct >= 0.8 ? 1 : 0;
+  if (pct != null && pct < 0.8) level = Math.min(level, 1);
+  const prev = db.get('days', addDays(date, -1)) || {}, game = gameOn(date);
+  const facts = [rec != null && `💚 ${rec}% recovery`, day.sleepMin != null && `😴 ${fmtSleep(day.sleepMin)} of ${fmtSleep(need)} needed`, prev.strain != null && `⚡ ${prev.strain} strain yesterday`].filter(Boolean);
+  const L = [
+    { cls: 'red', t: 'Take it easier', d: "Do what's planned, skip the extras, and recover hard today: fuel, fluids, early bed." },
+    { cls: 'yellow', t: 'Steady', d: "Normal day. Train like usual, just don't go looking for extra." },
+    { cls: 'green', t: 'Ready to go', d: 'Good day to push it.' }][level];
+  return { ...L, facts, game: game && !game.result ? `🏀 Game day: carbs at every meal and a gluten-free snack 2 to 3 hours before tip-off.` : '' };
+}
+function readinessCard(date) {
+  if (date !== dateStr()) return '';
+  const r = readiness(date);
+  if (!r) return '';
+  return `<section class="card readiness ${r.cls}"><div class="ready-top"><span class="ready-dot"></span><b>${r.t}</b><span class="muted small grow">Today's readiness</span></div>
+    <p class="small">${r.d}</p><div class="ready-facts">${r.facts.map(f => `<span>${f}</span>`).join('')}</div>${r.game ? `<p class="small mt">${r.game}</p>` : ''}</section>`;
+}
+
+// ---------- weekly recap (Sunday and Monday) ----------
+function weekRange(date) {
+  const dow = parseDate(date).getDay();
+  if (dow === 0) return [addDays(date, -6), date];
+  if (dow === 1) return [addDays(date, -7), addDays(date, -1)];
+  return null;
+}
+function weekStats([from, to]) {
+  const dates = []; for (let d = from; d <= to; d = addDays(d, 1)) dates.push(d);
+  const g = goals(), days = dates.map(d => db.get('days', d) || {});
+  const tots = dates.map(d => { const e = dayEntries(d); return e.length ? sumMacros(e.map(x => x.macros)) : null; }).filter(Boolean);
+  const avg = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+  const sleeps = days.map(d => d.sleepMin).filter(x => x != null), recs = days.map(d => d.recovery).filter(x => x != null);
+  const beds = days.map((d, i) => d.bed ? { ...d, date: dates[i] } : null).filter(Boolean);
+  return {
+    sleep: avg(sleeps), sleepN: sleeps.length, nearBed: beds.filter(nearPlan).length, bedN: beds.length, rec: avg(recs),
+    foodDays: tots.length, cal: avg(tots.map(t => t.cal)), protein: tots.filter(t => t.p >= g.p * 0.95).length,
+    water: days.filter(d => d.water >= g.water).length, stomach: db.list('stomach').filter(e => e.date >= from && e.date <= to).length,
+    train: days.reduce((a, d) => a + actsOf(d).filter(x => x !== 'rest').length, 0),
+    games: GAMES.filter(x => x.date >= from && x.date <= to && x.result).map(x => `${x.result.startsWith('W') ? 'W' : 'L'} ${vsAt(x)} ${x.opp}`),
+  };
+}
+function weekCard(date) {
+  const range = date === dateStr() && weekRange(date);
+  if (!range || profile()?.['weekSeen-' + range[1]]) return '';
+  const w = weekStats(range), g = goals();
+  if (!w.foodDays && !w.sleepN) return '';
+  const good = [], tryNext = [];
+  if (w.bedN && w.nearBed >= w.bedN - 1) good.push(`On your bedtime plan ${w.nearBed} of ${w.bedN} nights`); else if (w.bedN) tryNext.push(`Only ${w.nearBed} of ${w.bedN} nights near your bedtime plan. Start winding down when the 30-minute reminder hits.`);
+  if (w.foodDays && w.protein >= w.foodDays - 1) good.push(`Hit protein ${w.protein} of ${w.foodDays} days`); else if (w.foodDays) tryNext.push(`Protein goal hit ${w.protein} of ${w.foodDays} days. A shake or Greek yogurt after practice closes most of the gap.`);
+  if (w.cal != null && w.cal < g.cal * 0.9) tryNext.unshift(`Averaged ${fmt(w.cal)} cal, under your ${fmt(g.cal)} goal. On heavy days, add a meal-prep container or a snack.`);
+  if (!w.stomach && w.foodDays >= 4) good.push('No stomach trouble all week');
+  if (w.sleep != null && w.sleep >= sleepGoal() - 10) good.push(`Averaged ${fmtSleep(w.sleep)} of sleep`); else if (w.sleep != null) tryNext.push(`Averaged ${fmtSleep(w.sleep)} of sleep, under your ${fmtSleep(sleepGoal())} goal.`);
+  if (w.water < 4 && w.foodDays >= 4) tryNext.push(`Hit your water goal ${w.water} of 7 days.`);
+  const short = d => parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `<section class="card week-card"><button class="pr-x" data-act="weekDone" data-d="${range[1]}" aria-label="Close">✕</button>
+    <div class="card-head"><h3>📊 Your week</h3><span class="muted small">${short(range[0])} – ${short(range[1])}</span></div>
+    <div class="big-stats"><div><b>${w.sleep != null ? fmtSleep(w.sleep) : '–'}</b><span>avg sleep</span></div><div><b>${w.rec != null ? Math.round(w.rec) + '%' : '–'}</b><span>avg recovery</span></div><div><b>${w.cal != null ? fmt(w.cal) : '–'}</b><span>avg cal</span></div></div>
+    <div class="facts">
+      ${w.games.length ? `<div class="fact"><span>🏀</span><div>${w.games.map(esc).join(' · ')}</div></div>` : ''}
+      <div class="fact"><span>💪</span><div>${w.train} training session${w.train === 1 ? '' : 's'} logged${w.stomach ? ` · ${w.stomach} stomach log${w.stomach === 1 ? '' : 's'}` : ''}</div></div>
+      ${good[0] ? `<div class="fact"><span>✅</span><div><b>Went well:</b> ${good[0]}</div></div>` : ''}
+      ${tryNext[0] ? `<div class="fact"><span>🎯</span><div><b>Try this week:</b> ${tryNext[0]}</div></div>` : ''}
+    </div>
+    <button class="btn soft full" data-act="ask" data-q="How did my week go? What should I focus on this week?">✨ Ask Pulse about my week</button>
+  </section>`;
+}
+
+// ---------- what helps her recover (like Whoop's journal insights) ----------
+// Compares next-morning recovery after nights she did something vs didn't.
+function recoveryHelpers() {
+  const g = goals(), rows = [];
+  for (const d of db.list('days')) {
+    if (d.recovery == null) continue;
+    const prev = addDays(d.id, -1), pd = db.get('days', prev) || {}, ents = dayEntries(prev);
+    if (!ents.length && pd.water == null) continue;
+    const t = ents.length ? sumMacros(ents.map(e => e.macros)) : null;
+    const last = ents.reduce((m, e) => (e.time || '') > m ? e.time : m, '');
+    rows.push({ rec: d.recovery, f: {
+      dinner: last ? last < '19:00' : null,
+      bed: d.bed ? nearPlan(d) : null,
+      water: pd.water != null ? pd.water >= g.water : null,
+      caffeine: ents.length ? !ents.some(e => e.time >= '14:00' && entryTags(e).includes('Caffeine')) : null,
+      protein: t ? t.p >= g.p * 0.95 : null,
+      sleep: d.sleepMin != null ? d.sleepMin >= sleepGoal() : null,
+    } });
+  }
+  const LABELS = { dinner: 'Done eating by 7 PM', bed: 'In bed near your plan', water: 'Hit your water goal', caffeine: 'No caffeine after 2 PM', protein: 'Hit your protein goal', sleep: 'Slept your full goal' };
+  const out = [];
+  for (const k of Object.keys(LABELS)) {
+    const yes = rows.filter(r => r.f[k] === true).map(r => r.rec), no = rows.filter(r => r.f[k] === false).map(r => r.rec);
+    if (yes.length < 3 || no.length < 3) continue;
+    const a = yes.reduce((x, y) => x + y, 0) / yes.length, b = no.reduce((x, y) => x + y, 0) / no.length;
+    if (a - b >= 4) out.push({ k, label: LABELS[k], yes: Math.round(a), no: Math.round(b), n: yes.length + no.length });
+  }
+  return { rows: rows.length, list: out.sort((x, y) => (y.yes - y.no) - (x.yes - x.no)) };
+}
+function recoveryCard() {
+  const h = recoveryHelpers();
+  return `<section class="card gut-trends"><div class="card-head"><h3>💚 What helps you recover</h3></div>
+    ${h.rows < 8 ? `<p class="muted small">Once you've logged recovery for a couple of weeks (plus food, water and sleep), this shows what the nights before your best mornings had in common.</p>`
+      : h.list.length ? `<div class="facts">${h.list.slice(0, 4).map(x => `<div class="fact"><span>✅</span><div><b>${x.label}</b><div class="muted small">${x.yes}% recovery the next morning vs ${x.no}% when you didn't</div></div></div>`).join('')}</div>
+        <p class="muted tiny">From ${h.rows} mornings. Patterns, not proof.</p>`
+      : `<p class="small">No clear pattern yet. Keep logging and check back.</p>`}
+  </section>`;
+}
+
+// ---------- Ask Pulse ----------
+// Each question sends a plain-text summary of what she's logged to the AI on
+// the Pulse server. Nothing is saved there.
+function askContext() {
+  const p = profile() || {}, g = goals(), t = dateStr(), lines = [];
+  const meds = medList().map(m => `${m.name} (${medWhen(m).toLowerCase()}${medFood(m) ? ', with food' : ''})`).join('; ');
+  lines.push(`Name: ${p.name || 'Carly'}. University of Portland women's basketball, #${p.number || '11'}. Celiac: strictly gluten-free.`);
+  lines.push(`Today: ${parseDate(t).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}, ${fmtTime(timeStr())}.`);
+  lines.push(`Daily goals: ${g.cal} cal, ${g.p} g protein, ${g.c} g carbs, ${g.f} g fat, ${g.fiber} g fiber, ${g.water} oz water. Sleep goal ${fmtSleep(sleepGoal())}.`);
+  if (meds) lines.push(`Meds & vitamins: ${meds}.`);
+  const tp = bedPlan(t); lines.push(`Tonight: sleep need ${fmtSleep(tp.need.min)}${tp.need.why.length ? ` (${tp.need.why.join(', ')})` : ''}, bed by ${fmtTime(tp.bed)}, up at ${fmtTime(tp.wake)}.`);
+  const r = readiness(t); if (r) lines.push(`Readiness today: ${r.t} (${r.facts.join(', ')}).`);
+  const next = GAMES.filter(x => x.date >= t && !x.result).slice(0, 3).map(x => `${x.date} ${vsAt(x)} ${x.opp} ${gameTime(x)}`);
+  const past = GAMES.filter(x => x.result).slice(-3).map(x => `${x.date} ${vsAt(x)} ${x.opp}: ${x.result}`);
+  if (next.length) lines.push(`Next games: ${next.join('; ')}.`);
+  if (past.length) lines.push(`Recent results: ${past.join('; ')}.`);
+  const preps = activePreps(); if (preps.length) lines.push(`Meal prep in the fridge: ${preps.map(x => `${x.name} (${fmt(x.left)} left, made ${x.madeOn})`).join('; ')}.`);
+  if (periodOn() && periodStarts().length) { const c = cycleInfo(); lines.push(`Cycle: last period started ${c.last}${c.avg ? `, usual cycle ${c.avg} days, next around ${c.next}` : ''}.`); }
+  const gut = analyzeGut(db.list('entries'), db.list('stomach'), entryTags, { windowH: 12 });
+  const strong = [...gutSuspects().values()], st = db.list('stomach');
+  lines.push(`Stomach analysis (${st.length} episodes logged): ${strong.length ? `foods that stand out: ${strong.map(f => `${f.name} (trouble after ${f.hit} of ${f.eaten} times)`).join('; ')}` : 'no single food stands out yet; everyday foods show up before most episodes just because she eats them daily, so they are not suspects'}.`);
+  if (gut.tags.length) lines.push(`Food types more often before stomach trouble: ${gut.tags.slice(0, 4).map(x => `${x.name} (${Math.round(x.rate * 100)}% of the time vs ${Math.round(gut.base * 100)}% normally)`).join('; ')}.`);
+  if (periodOn() && st.length) { const pw = periodWindow(); lines.push(`${st.filter(e => pw.has(e.date)).length} of ${st.length} stomach episodes and ${db.list('feel').filter(e => pw.has(e.date)).length} of ${db.list('feel').length} felt-off check-ins were during or within 2 days before a period.`); }
+  const ctx = new Map(); st.forEach(e => (e.context || []).forEach(c => ctx.set(c, (ctx.get(c) || 0) + 1)));
+  if (ctx.size) lines.push(`What was going on during stomach episodes: ${[...ctx.entries()].sort((x, y) => y[1] - x[1]).map(([c, n]) => `${c} (${n})`).join(', ')}.`);
+  if (gut.safe.length) lines.push(`Foods that seem fine: ${gut.safe.slice(0, 6).map(f => f.name).join(', ')}.`);
+  const help = recoveryHelpers().list; if (help.length) lines.push(`What helps recovery: ${help.map(x => `${x.label} (${x.yes}% vs ${x.no}%)`).join('; ')}.`);
+  lines.push('', 'Daily log, newest first (blank fields = not logged):');
+  for (let i = 0; i < 35; i++) {
+    const d = addDays(t, -i), day = db.get('days', d) || {}, ents = dayEntries(d);
+    const st = db.list('stomach').filter(e => e.date === d), fl = db.list('feel').filter(e => e.date === d);
+    const parts = [];
+    if (ents.length) {
+      const m = sumMacros(ents.map(e => e.macros));
+      parts.push(`ate ${fmt(m.cal)} cal, P ${fmt(m.p)} C ${fmt(m.c)} F ${fmt(m.f)} fiber ${fmt(m.fiber)}`);
+      parts.push(`food: ${ents.map(e => `${e.time || ''} ${e.name}`.trim()).slice(0, 14).join(', ')}`);
+    }
+    if (day.water) parts.push(`water ${day.water} oz`);
+    if (day.sleepMin != null || day.bed) parts.push(`slept ${day.sleepMin != null ? fmtSleep(day.sleepMin) : '?'}${day.bed ? ` (bed ${day.bed}, up ${day.wake || '?'})` : ''}`);
+    const w = [day.recovery != null && `recovery ${day.recovery}%`, day.hrv != null && `HRV ${day.hrv}`, day.rhr != null && `RHR ${day.rhr}`, day.strain != null && `strain ${day.strain}`, day.burned != null && `burned ${day.burned}`, day.steps != null && `steps ${day.steps}`].filter(Boolean);
+    if (w.length) parts.push(w.join(', '));
+    if (actsOf(day).length) parts.push(`training: ${actsOf(day).join(', ')}`);
+    const gm = gameOn(d); if (gm) parts.push(`GAME ${vsAt(gm)} ${gm.opp}${gm.result ? ` ${gm.result}` : ''}`);
+    if (medList().length && day.meds) parts.push(`meds ${Object.keys(day.meds).length}/${medList().length}`);
+    if (day.period) parts.push(`period day${day.periodFeel?.length ? ` (${day.periodFeel.join(', ')})` : ''}`);
+    if (day.weight != null) parts.push(`weight ${day.weight} lb`);
+    st.forEach(e => parts.push(`STOMACH ${e.time} severity ${e.severity}/5: ${(e.symptoms || []).join(', ')}${e.context?.length ? ` [${e.context.join(', ')}]` : ''}${e.notes ? ` "${e.notes}"` : ''}`));
+    fl.forEach(e => parts.push(`FELT OFF ${e.time} level ${e.level}/5: ${(e.feelings || []).join(', ')}${e.context?.length ? ` [${e.context.join(', ')}]` : ''}${e.notes ? ` "${e.notes}"` : ''}`));
+    if (day.notes) parts.push(`journal: "${day.notes.slice(0, 500)}"`);
+    if (parts.length) lines.push(`${d} ${parseDate(d).toLocaleDateString('en-US', { weekday: 'short' })}: ${parts.join(' | ')}`);
+  }
+  return lines.join('\n');
+}
+const ASK_IDEAS = ['Why was I tired this week?', "What's been upsetting my stomach?", 'How has my sleep been?', 'Am I eating enough on practice days?', 'What should I eat before the next game?'];
+function askBar() {
+  return `<section class="card ask-bar"><button class="ask-open" data-act="ask"><span>✨</span><span class="grow">Ask Pulse anything about you</span></button>
+    <div class="ask-ideas">${ASK_IDEAS.slice(0, 3).map(q => `<button class="pr-tag" data-act="ask" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div></section>`;
+}
+const fmtAnswer = t => esc(t).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+function openAsk(q = '') {
+  ui.chat ||= [];
+  const s = openSheet({
+    title: '✨ Ask Pulse', full: true,
+    body: `<div id="chat" class="chat"></div>`,
+    footer: `<form class="ask-form" id="af"><input id="aq" placeholder="Ask about your sleep, food, stomach…" autocomplete="off" enterkeyhint="send"><button class="btn primary" aria-label="Send">↑</button></form>`,
+  });
+  const box = s.$('#chat');
+  const draw = (thinking = false) => {
+    box.innerHTML = (ui.chat.length ? '' : `<div class="chat-hi"><div class="chat-big">✨</div><p>Ask anything about how you've been. Pulse reads everything you've logged to answer.</p>
+        <div class="ask-ideas col">${ASK_IDEAS.map(x => `<button class="pr-tag" data-x="idea" data-q="${esc(x)}">${esc(x)}</button>`).join('')}</div></div>`)
+      + ui.chat.map(m => `<div class="msg ${m.role}">${m.role === 'user' ? esc(m.content) : fmtAnswer(m.content)}</div>`).join('')
+      + (thinking ? `<div class="msg assistant thinking"><span></span><span></span><span></span></div>` : '');
+    box.parentElement.scrollTop = box.parentElement.scrollHeight;
+  };
+  async function send(text) {
+    text = text.trim();
+    if (!text || s.busy) return;
+    s.busy = true; s.$('#aq').value = '';
+    ui.chat.push({ role: 'user', content: text }); draw(true);
+    try {
+      const r = await fetch(CONFIG_PUSH() + '/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ context: askContext(), messages: ui.chat.slice(-10) }) });
+      const j = await r.json();
+      ui.chat.push({ role: 'assistant', content: j.answer || "Couldn't answer that one right now. Try again in a minute." });
+    } catch { ui.chat.push({ role: 'assistant', content: "Can't reach Pulse right now. Check your connection and try again." }); }
+    s.busy = false; draw();
+  }
+  s.on('submit', '#af', (el, e) => { e.preventDefault(); send(s.$('#aq').value); });
+  s.on('click', '[data-x="idea"]', el => send(el.dataset.q));
+  draw();
+  if (q) send(q);
+}
 
 // ---------- journal ----------
 function journalCard(day) {
@@ -1110,6 +1335,7 @@ function screenTrends() {
 
   return `${header('Trends', streak() ? `🔥 ${streak()}-day logging streak` : '', `<button class="top-btn" data-act="calendar">${icon('calendar')} Calendar</button>`)}
   <div class="pad">
+    ${askBar()}
     <div class="seg range">${[7, 30, 90].map(r => `<button class="${ui.range === r ? 'on' : ''}" data-act="range" data-r="${r}">${r === 7 ? 'Week' : r === 30 ? 'Month' : '3 months'}</button>`).join('')}</div>
 
     <section class="card">
@@ -1164,10 +1390,10 @@ function screenTrends() {
       ${barChart({ values: dv('strain').map(x => x || 0), labels, dates, color: 'var(--c)', fmtY: x => Math.round(x * 10) / 10 })}
     </section>
 
-    ${profile()?.showWeight ? weightCard(dates, labels) : ''}
 
     ${top.length ? `<section class="card"><h3>Most-logged foods</h3>${top.map(([name, c]) => `<div class="kv-row"><span>${esc(name)}</span><span class="muted">${c.n}×</span></div>`).join('')}</section>` : ''}
 
+    ${recoveryCard()}
     ${feelTrends(dates)}
     ${gutTrends(dates)}
     ${cycleTrends()}
@@ -1311,13 +1537,13 @@ function screenMe() {
     <section class="card profile">
       <div class="avatar">${esc(firstName()[0]?.toUpperCase() || '?')}</div>
       <div class="grow"><input class="name-in" value="${esc(p.name || '')}" placeholder="Your name" data-change="name" aria-label="Your name">
-      <div class="muted small">${cloud ? esc(cloud.email) : '🔒 Private. Everything stays on this phone.'}</div></div>
+      <div class="muted small">${cloud ? esc(cloud.email) : '🔒 Private. Stays on this phone. Ask Pulse only reads it when you ask.'}</div></div>
     </section>
 
     <section class="card">
       <h3>Your setup</h3>
       ${OWNER?.glutenFree ? '' : switchRow('glutenFree', '🌾 I eat gluten-free', 'Flags foods and recipes that contain or may contain gluten.')}
-      ${switchRow('showWeight', '⚖️ Show body weight', 'Off by default. Turns on the weight tracker in Trends and on your recovery card.')}
+      ${switchRow('showWeight', '⚖️ Show body weight', 'Off by default. Adds a weight card to Today.')}
       ${switchRow('showPeriod', '🌸 Period tracking', 'A small row at the bottom of Today. It never shows up on summary images.', true)}
       <div class="kv-row"><span>🌙 Sleep goal<div class="muted tiny">Bedtime each night works back from this</div></span><select class="time-in" data-change="sleepGoal" aria-label="Sleep goal">${[420, 450, 480, 510, 540, 570, 600].map(m => `<option value="${m}" ${m === sleepGoal() ? 'selected' : ''}>${fmtSleep(m)}</option>`).join('')}</select></div>
       <button class="btn soft full mt" data-act="wakeTimes">⏰ Usual wake-up times</button>
@@ -1411,6 +1637,8 @@ const acts = {
   eatPrep: d => eatPrep(d.id),
   editPrep: d => openPrep({ prep: db.get('preps', d.id) }),
   logWeight: () => openWeight(),
+  ask: d => openAsk(d.q || ''),
+  weekDone: d => saveProfile({ ['weekSeen-' + d.d]: true }),
 };
 const inputs = {
   foodQ: el => { ui.foodQ = el.value; $('#foodList').innerHTML = foodListHTML(); },

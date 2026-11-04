@@ -552,7 +552,7 @@ textarea { resize: vertical; }
 .wish-bar { position: fixed; top: calc(max(env(safe-area-inset-top), 20px) + 10px); left: 50%; transform: translateX(-50%); z-index: 60; border: 0; border-radius: 999px; padding: 10px 18px; background: var(--purple); color: #fff; font: inherit; font-weight: 700; font-size: 15px; box-shadow: var(--shadow); animation: wishIn .4s ease; }
 @keyframes wishIn { from { opacity: 0; transform: translate(-50%, -8px); } }
 
-.demo-tag { position: fixed; top: calc(max(env(safe-area-inset-top), 20px) + 6px); right: 10px; z-index: 55; padding: 4px 10px; border-radius: 999px; background: var(--warn); color: #fff; font-size: 12px; font-weight: 700; pointer-events: none; }
+.demo-tag { position: fixed; top: calc(max(env(safe-area-inset-top), 20px) + 6px); left: 10px; z-index: 55; padding: 4px 10px; border-radius: 999px; background: var(--warn); color: #fff; font-size: 12px; font-weight: 700; pointer-events: none; }
 
 /* training checklist */
 .train-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -592,3 +592,37 @@ textarea { resize: vertical; }
 .pr-tag { border: 0; background: var(--lav-3); color: var(--muted); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 13px; font-weight: 600; }
 .pr-tag.on { background: #E77FA833; color: var(--text); }
 .period-row.on { border-color: var(--line); }
+
+/* readiness */
+.readiness .ready-top { display: flex; align-items: center; gap: 8px; }
+.ready-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; }
+.readiness.green .ready-dot { background: var(--good); } .readiness.yellow .ready-dot { background: var(--mid); } .readiness.red .ready-dot { background: var(--bad); }
+.readiness.green { border-left: 4px solid var(--good); } .readiness.yellow { border-left: 4px solid var(--mid); } .readiness.red { border-left: 4px solid var(--bad); }
+.readiness p { margin: 6px 0 0; }
+.ready-facts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.ready-facts span { background: var(--lav-3); border-radius: 8px; padding: 4px 8px; font-size: 12px; font-weight: 600; }
+/* weekly recap */
+.week-card { position: relative; }
+.week-card .pr-x { position: absolute; top: 14px; right: 14px; }
+.week-card .card-head { padding-right: 28px; }
+/* Ask Pulse */
+.today-top { position: relative; }
+.ask-pill { position: absolute; top: calc(max(env(safe-area-inset-top), 20px) + 8px); right: 16px; border: 0; border-radius: 999px; padding: 7px 12px; background: rgba(255, 255, 255, .16); color: #fff; font: inherit; font-size: 14px; font-weight: 700; }
+.ask-bar { padding: 12px; }
+.ask-open { display: flex; align-items: center; gap: 10px; width: 100%; border: 1.5px solid var(--line); border-radius: 14px; padding: 12px 14px; background: var(--bg); color: var(--muted); font: inherit; font-size: 15px; text-align: left; }
+.ask-ideas { display: flex; gap: 6px; margin-top: 10px; overflow-x: auto; scrollbar-width: none; }
+.ask-ideas .pr-tag { white-space: nowrap; }
+.ask-ideas.col { flex-direction: column; align-items: stretch; overflow: visible; }
+.ask-ideas.col .pr-tag { white-space: normal; text-align: left; padding: 10px 12px; }
+.chat { display: flex; flex-direction: column; gap: 10px; padding-bottom: 8px; }
+.chat-hi { text-align: center; color: var(--muted); padding: 12px 4px; }
+.chat-big { font-size: 40px; }
+.msg { max-width: 86%; padding: 10px 14px; border-radius: 18px; font-size: 15px; line-height: 1.45; }
+.msg.user { align-self: flex-end; background: var(--purple-3); color: #fff; border-bottom-right-radius: 6px; }
+.msg.assistant { align-self: flex-start; background: var(--lav-3); border-bottom-left-radius: 6px; }
+.msg.thinking { display: flex; gap: 5px; }
+.msg.thinking span { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); animation: talkPulse 1s ease-in-out infinite; }
+.msg.thinking span:nth-child(2) { animation-delay: .15s; } .msg.thinking span:nth-child(3) { animation-delay: .3s; }
+.ask-form { display: flex; gap: 8px; width: 100%; }
+.ask-form input { flex: 1; min-width: 0; border: 1.5px solid var(--line); border-radius: 999px; padding: 12px 16px; font: inherit; font-size: 16px; background: var(--bg); color: inherit; }
+.ask-form .btn { border-radius: 50%; width: 46px; height: 46px; padding: 0; font-size: 20px; }

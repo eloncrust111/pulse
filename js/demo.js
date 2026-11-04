@@ -80,7 +80,9 @@ export async function seedDemo() {
   const notes = ['Legs felt heavy at practice but shooting was good.', 'Lift was hard. PR on trap bar deadlift though.', 'Slept great, felt fast today.',
     'Stomach was off after lunch. Not sure why.', 'Film + recovery day. Iced after.', 'Coach said my defense looked better.', 'Tired. Need to get to bed on time tonight.'];
 
+  let lateDinner = false, lowWater = false;
   for (let d = start; d <= today; d = addDays(d, 1)) {
+    const prevLate = lateDinner, prevLow = lowWater;
     const isToday = d === today, dow = new Date(d + 'T12:00').getDay();
     const game = games.has(d), rest = dow === 0;
     const prep = [...preps].reverse().find(p => p.madeOn <= d && addDays(p.madeOn, 6) > d);
@@ -97,7 +99,8 @@ export async function seedDemo() {
       if (rnd() < 0.35) log(d, 'snack', hm(between(840, 870)), 'food', F.celsius, 355);
       if (rnd() < 0.4) log(d, 'snack', hm(between(1000, 1040)), 'food', pick([F.apple, F.chips, F.yogurt]), 150);
       // dinner
-      const dinT = hm(between(1080, 1140));
+      const dinT = hm(between(1065, 1185));
+      lateDinner = dinT >= '19:00';
       if (game || (dow === 4 && rnd() < 0.7)) quick(d, 'dinner', dinT, game ? 'Team meal (pregame)' : 'Team dinner', 820, 48, 105, 22);
       else if (prep && prep.eaten < prep.containers && rnd() < 0.5) { log(d, 'dinner', dinT, 'recipe', prep._r, prep.gramsEach, { prepId: prep.id }); prep.eaten++; }
       else { log(d, 'dinner', dinT, 'food', F.salmon, 140); log(d, 'dinner', dinT, 'food', F.sweetpot, 200); log(d, 'dinner', dinT, 'food', F.broc, 100); }
@@ -108,12 +111,15 @@ export async function seedDemo() {
     const bedM = 1260 + between(-20, 25) + (rnd() < 0.12 ? 50 : 0);
     const wakeM = 350 + between(-10, 20);
     const sleepMin = Math.round(wakeM + 1440 - bedM - between(15, 35));
-    const recovery = Math.round(Math.min(98, Math.max(22, 30 + (sleepMin - 420) * 0.35 + between(10, 45))));
+    // Late dinners and low water the day before cost some recovery, so the insights card has something real to find.
+    const recovery = Math.round(Math.min(98, Math.max(22, 30 + (sleepMin - 420) * 0.35 + between(10, 40) + (prevLate ? -9 : 4) + (prevLow ? -6 : 2))));
     const day = { id: d, date: d };
     if (rnd() > 0.08) Object.assign(day, { bed: hm(bedM), wake: hm(wakeM), sleepMin, sleepPerf: Math.round(between(78, 97)) });
     if (rnd() > 0.15) Object.assign(day, { recovery, hrv: Math.round(between(68, 98)), rhr: Math.round(between(49, 56)) });
     if (!isToday && rnd() > 0.15) Object.assign(day, { strain: Math.round(between(game ? 15 : rest ? 5 : 10, game ? 19 : rest ? 9 : 16) * 10) / 10, burned: Math.round(between(rest ? 2200 : 2700, rest ? 2500 : 3300)), steps: Math.round(between(7000, 15000)) });
     day.water = isToday ? 48 : Math.round(between(64, 112) / 8) * 8;
+    lowWater = day.water < 100;
+    if ([1, 3, 5].includes(dow)) day.weight = Math.round((152 + between(-1.5, 1.5)) * 10) / 10;
     day.activity = rest ? ['rest'] : game ? ['shoot'] : dow === 1 || dow === 3 ? ['practice', 'weights'] : dow === 6 ? ['workout'] : rnd() < 0.3 ? ['practice', 'shoot'] : ['practice'];
     if (isToday) day.activity = ['practice'];
     const taken = {};
@@ -144,7 +150,7 @@ export async function seedDemo() {
   ];
   feel.forEach(([o, time, level, feelings, context]) => db.put('feel', { id: id('o'), date: addDays(today, o), time, level, feelings, context, notes: '' }));
 
-  db.put('settings', { id: 'profile', name: 'Carly', number: '11', glutenFree: true, showWeight: false, sleepGoal: 540, meds,
+  db.put('settings', { id: 'profile', name: 'Carly', number: '11', glutenFree: true, showWeight: true, sleepGoal: 540, meds,
     goals: { cal: 2600, p: 135, c: 320, f: 80, fiber: 30, water: 100 }, theme: 'system', healthReady: true });
   return { entries: entries.length, days: 43 };
 }

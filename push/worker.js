@@ -17,6 +17,7 @@ export default {
     if (req.method === 'OPTIONS') return new Response(null, { headers: cors });
     const url = new URL(req.url);
     if (url.pathname === '/results') return json(JSON.parse(await env.SUBS.get('results') || '{}'));
+    if (url.pathname === '/ask' && req.method === 'POST') return ask(req, env);
     if (url.pathname !== '/sub') return json({ ok: true, name: 'pulse-push' });
     let body;
     try { body = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
@@ -140,4 +141,35 @@ export async function checkResults(env, now = new Date(), send = sendPush, get =
   const wins = fresh.filter(k => found[k].r === 'W' && now - startMs(found[k].start) < 12 * 3600e3);
   if (!wins.length) return;
   for (const s of await loadSubs(env)) if (s.wins !== false) await send(env, s.endpoint, 3 * 3600);
+}
+
+// ---------- Ask Pulse ----------
+// The app sends a summary of her logs with each question. Nothing is stored.
+const MODEL = '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+const SYSTEM = `You are Pulse, the assistant inside a college athlete's personal health app. You can see everything she has logged (below).
+How to answer:
+- Use her data. Be specific: name dates, times and numbers. Compare to her goals and to her usual.
+- Keep it short: 2 to 5 sentences, or a few bullets. Plain, warm, direct, like a smart teammate. No filler, no "As an AI", no disclaimers unless something medical comes up.
+- If the data needed isn't logged, say what's missing and what to log.
+- For stomach questions, trust the stomach analysis lines: foods she eats almost every day are not suspects unless listed as standing out. Weigh period timing, team meals or food she didn't make (gluten cross-contact), stress and food types like sugar alcohols or caffeine.
+- General sports nutrition, sleep and recovery tips are fine. Every food suggestion must be gluten-free (she has celiac).
+- Never suggest eating less or losing weight. Never diagnose. For anything medical, severe or persistent, point her to her dietitian, athletic trainer or doctor.
+- Period days may have little or no bleeding; treat them as cycle days and look at symptoms and mood.
+- Don't use markdown headers or tables. Bold with **like this** is fine.
+
+Her data:
+`;
+async function ask(req, env) {
+  let b;
+  try { b = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
+  const context = String(b.context || '').slice(0, 60000);
+  const messages = (Array.isArray(b.messages) ? b.messages : []).slice(-10)
+    .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 2000) })).filter(m => m.content);
+  if (!messages.length || messages[messages.length - 1].role !== 'user') return json({ error: 'no question' }, 400);
+  try {
+    const r = await env.AI.run(MODEL, { messages: [{ role: 'system', content: SYSTEM + context }, ...messages], max_tokens: 700, temperature: 0.4 });
+    return json({ answer: String(r?.response || '').trim() });
+  } catch (e) {
+    return json({ error: 'busy', detail: String(e?.message || e).slice(0, 200) }, 503);
+  }
 }

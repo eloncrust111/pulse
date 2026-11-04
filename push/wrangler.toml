@@ -10,5 +10,8 @@ VAPID_PUBLIC = "BD1F8uEPkCZZmoIEgO9d4d96GM3RevriZRex5W7nYDD9mAv4hzX8SO-NtcmPfp7k
 binding = "SUBS"
 id = "3233d9afcb3a4018ab63b66dc6f1e11c"
 
+[ai]
+binding = "AI"
+
 [triggers]
 crons = ["* * * * *"]
