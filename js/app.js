@@ -320,6 +320,7 @@ function screenToday() {
   ${feelCard(d)}
   ${gutCard(d)}
   ${journalCard(day)}
+  ${periodRow(d, day)}
   <div class="spacer"></div>`;
 }
 
@@ -518,6 +519,76 @@ function openMeds() {
   s.on('click', '[data-x="rm"]', el => { meds.splice(+el.dataset.n, 1); draw(); });
   s.on('click', '[data-x="save"]', () => { saveProfile({ meds }); s.close(); toast('Saved'); });
   draw();
+}
+
+// ---------- period ----------
+// Kept low-key: one slim row on Today. Period days line up with stomach and
+// feeling-off logs so cycle symptoms don't get blamed on food.
+const FLOWS = [['spotting', 'Spotting'], ['light', 'Light'], ['medium', 'Medium'], ['heavy', 'Heavy']];
+const periodOn = () => profile()?.showPeriod !== false;
+const periodDays = () => db.list('days').filter(d => d.period).map(d => d.id).sort();
+const daysBetween = (a, b) => Math.round((parseDate(b) - parseDate(a)) / 864e5);
+// A new period starts after 2+ days without one, so a skipped log mid-period doesn't split it.
+function periodStarts() {
+  const set = new Set(periodDays());
+  return [...set].filter(d => !set.has(addDays(d, -1)) && !set.has(addDays(d, -2)));
+}
+function cycleInfo(date = dateStr()) {
+  const starts = periodStarts(), set = new Set(periodDays());
+  const last = [...starts].reverse().find(s => s <= date);
+  const gaps = starts.slice(1).map((s, i) => daysBetween(starts[i], s)).filter(g => g >= 18 && g <= 50);
+  const lens = starts.map(s => {
+    let d = s;
+    while (set.has(addDays(d, 1)) || set.has(addDays(d, 2))) d = set.has(addDays(d, 1)) ? addDays(d, 1) : addDays(d, 2);
+    return daysBetween(s, d) + 1;
+  });
+  const avg = gaps.length ? Math.round(median(gaps)) : null;
+  return { starts, last, day: last ? daysBetween(last, date) + 1 : null, avg,
+    len: lens.length ? Math.round(median(lens)) : null, next: last && avg ? addDays(last, avg) : null };
+}
+// Period days plus the 2 days before each start, when cramps and stomach trouble often begin.
+function periodWindow() {
+  const w = new Set(periodDays());
+  periodStarts().forEach(s => { w.add(addDays(s, -1)); w.add(addDays(s, -2)); });
+  return w;
+}
+function periodRow(date, day) {
+  if (!periodOn()) return '';
+  const c = cycleInfo(date);
+  if (day.period) return `<section class="period-row on"><div class="pr-top"><span>🌸 Period${c.day ? ` · day ${c.day}` : ''}</span><button class="pr-x" data-act="period" data-f="" aria-label="Remove">✕</button></div>
+    <div class="pr-flow">${FLOWS.map(([k, l]) => `<button class="chip sm ${day.period === k ? 'on' : ''}" data-act="period" data-f="${k}">${l}</button>`).join('')}</div></section>`;
+  const soon = c.next && date >= dateStr() ? daysBetween(date, c.next) : null;
+  const hint = soon != null && soon >= 0 && soon <= 4 ? (soon === 0 ? 'may start today' : `may start in ~${soon} day${soon === 1 ? '' : 's'}`) : c.day && c.day <= 60 ? `cycle day ${c.day}` : '';
+  return `<button class="period-row" data-act="period" data-f="medium"><span>🌸 Period</span><span class="muted small grow">${hint}</span><span class="link">Log</span></button>`;
+}
+function setPeriod(f) {
+  const d = { ...(db.get('days', ui.date) || { id: ui.date, date: ui.date }) };
+  if (f) d.period = f; else delete d.period;
+  db.put('days', d);
+}
+// "3 of 7 stomach logs were during or right before your period"
+function periodShare(list, what) {
+  if (!periodOn() || list.length < 3 || !periodStarts().length) return '';
+  const w = periodWindow(), n = list.filter(e => w.has(e.date)).length;
+  return n >= 2 ? `<div class="fact"><span>🌸</span><div><b>${n} of ${list.length}</b> ${what} were during or right before your period</div></div>` : '';
+}
+function cycleTrends() {
+  if (!periodOn()) return '';
+  const c = cycleInfo();
+  if (!c.starts.length) return '';
+  const since = c.last ? daysBetween(c.last, dateStr()) : null;
+  const short = d => parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return `<section class="card gut-trends">
+    <div class="card-head"><h3>🌸 Cycle</h3></div>
+    <div class="big-stats"><div><b>${c.avg ?? '–'}</b><span>avg cycle (days)</span></div><div><b>${c.len ?? '–'}</b><span>avg period (days)</span></div><div><b>${c.day ?? '–'}</b><span>cycle day</span></div></div>
+    <div class="facts">
+      <div class="fact"><span>📅</span><div>Last started <b>${short(c.last)}</b>${c.next ? ` · next around <b>${short(c.next)}</b>` : ''}</div></div>
+      ${periodShare(db.list('stomach'), 'stomach logs')}
+      ${periodShare(db.list('feel'), 'feeling-off check-ins')}
+    </div>
+    ${!c.avg ? `<p class="muted small">Log a couple of periods and this will show your usual cycle length.</p>` : ''}
+    ${since > 40 && since < 120 ? `<p class="muted small">It's been ${since} days since your last logged period. If you just forgot to log it, ignore this. If it's late for you, it's worth mentioning to your dietitian or trainer, since training hard without enough fuel can delay it.</p>` : ''}
+  </section>`;
 }
 
 // ---------- journal ----------
@@ -841,6 +912,7 @@ function screenTrends() {
 
     ${feelTrends(dates)}
     ${gutTrends(dates)}
+    ${cycleTrends()}
     <button class="btn soft full" data-act="shareImg">📸 Save a summary to Photos</button>
   </div>`;
 }
@@ -898,6 +970,7 @@ function gutTrends(dates) {
     <div class="big-stats"><div><b>${inRange.length}</b><span>episodes this range</span></div><div><b>${inRange.length ? (inRange.reduce((s, e) => s + e.severity, 0) / inRange.length).toFixed(1) : '–'}</b><span>avg severity /5</span></div><div><b>${new Set(inRange.map(e => e.date)).size}</b><span>days affected</span></div></div>
     ${sym.size ? `<p class="small">Most common: ${[...sym.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(s => `<b>${esc(s[0])}</b> (${s[1]})`).join(', ')}</p>` : ''}
     ${gutTiming(all)}
+    ${periodShare(all, 'stomach logs') ? `<div class="facts">${periodShare(all, 'stomach logs')}</div>` : ''}
     ${a.episodes < 3 ? `<p class="muted small">Log at least 3 stomach episodes (and keep logging food) and this will start pointing out possible trigger foods.</p>` : `
       <div class="win">Look at food eaten within
         ${[4, 12, 24].map(w => `<button class="chip sm ${ui.gutWindow === w ? 'on' : ''}" data-act="gutWin" data-w="${w}">${w}h</button>`).join('')} before it hurt</div>
@@ -958,6 +1031,7 @@ function feelTrends(dates) {
     <div class="card-head"><h3>😵‍💫 Feeling off</h3></div>
     <div class="big-stats"><div><b>${inRange.length}</b><span>check-ins this range</span></div><div><b>${new Set(inRange.map(e => e.date)).size}</b><span>days affected</span></div></div>
     ${fc.size ? `<div class="chips">${[...fc.entries()].sort((x, y) => y[1] - x[1]).slice(0, 5).map(f => `<span class="chip sm">${feelEmoji(f[0])} ${esc(f[0])} · ${f[1]}</span>`).join('')}</div>` : ''}
+    ${periodShare(all, 'check-ins') ? `<div class="facts">${periodShare(all, 'check-ins')}</div>` : ''}
     ${offDates.size < 3 ? `<p class="muted small mt">Log at least 3 off days (and keep logging food and sleep) to see what's different about them.</p>`
       : diffs.length ? `<h4>What's different on off days</h4>${diffRows(diffs)}`
       : `<p class="small mt">No clear difference in sleep, food or recovery on off days yet.</p>`}
@@ -968,7 +1042,7 @@ function feelTrends(dates) {
 }
 
 // ===== ME =====
-const switchRow = (k, label, sub) => `<button class="switch-row" data-act="toggle" data-k="${k}"><span class="grow">${label}<div class="muted tiny">${sub}</div></span><span class="switch ${profile()?.[k] ? 'on' : ''}"><i></i></span></button>`;
+const switchRow = (k, label, sub, def = false) => `<button class="switch-row" data-act="toggle" data-k="${k}"${def ? ' data-def="1"' : ''}><span class="grow">${label}<div class="muted tiny">${sub}</div></span><span class="switch ${profile()?.[k] ?? def ? 'on' : ''}"><i></i></span></button>`;
 function screenMe() {
   const p = profile() || {}, g = goals();
   const cloud = sync.enabled && sync.currentUser();
@@ -986,6 +1060,7 @@ function screenMe() {
       <h3>Your setup</h3>
       ${OWNER?.glutenFree ? '' : switchRow('glutenFree', '🌾 I eat gluten-free', 'Flags foods and recipes that contain or may contain gluten.')}
       ${switchRow('showWeight', '⚖️ Show body weight', 'Off by default. Turns on the weight tracker in Trends and on your recovery card.')}
+      ${switchRow('showPeriod', '🌸 Period tracking', 'A small row at the bottom of Today. It never shows up on summary images.', true)}
       <div class="kv-row"><span>🌙 Bedtime goal<div class="muted tiny">Sleep card tracks how close you stay to it</div></span><input type="time" class="time-in" value="${bedGoal()}" data-change="bedGoal" aria-label="Bedtime goal"></div>
       <button class="btn soft full mt" data-act="editMeds">💊 Edit meds & vitamins</button>
     </section>
@@ -1064,7 +1139,8 @@ const acts = {
   healthSync: () => healthSync(),
   healthPaste: () => healthPaste(),
   healthGuide: () => openHealthGuide(),
-  toggle: d => saveProfile({ [d.k]: !profile()?.[d.k] }),
+  toggle: d => saveProfile({ [d.k]: !(profile()?.[d.k] ?? d.def === '1') }),
+  period: d => setPeriod(d.f),
   eatPrep: d => eatPrep(d.id),
   editPrep: d => openPrep({ prep: db.get('preps', d.id) }),
   logWeight: () => openWeight(),
@@ -1841,7 +1917,7 @@ function openCalendar() {
     body: `<div class="cal-nav"><button class="icon-btn" data-x="prev" aria-label="Previous month">‹</button><b id="calTitle"></b><button class="icon-btn" data-x="next" aria-label="Next month">›</button></div>
       <div class="cal-grid cal-wd">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(d => `<span>${d}</span>`).join('')}</div>
       <div class="cal-grid" id="calGrid"></div>
-      <div class="cal-legend"><span><i class="lg on"></i>On target</span><span><i class="lg under"></i>Under</span><span><i class="lg over"></i>Over</span><span><i class="mk gut"></i>Stomach</span><span><i class="mk feel"></i>Felt off</span><span><i class="mk sleep"></i>Recovery logged</span><span>🏀 Practice</span><span>🏋️ Lift</span><span><i class="lg game"></i>Game</span></div>
+      <div class="cal-legend"><span><i class="lg on"></i>On target</span><span><i class="lg under"></i>Under</span><span><i class="lg over"></i>Over</span><span><i class="mk gut"></i>Stomach</span><span><i class="mk feel"></i>Felt off</span><span><i class="mk sleep"></i>Recovery logged</span>${periodOn() ? '<span><i class="mk period"></i>Period</span>' : ''}<span>🏀 Practice</span><span>🏋️ Lift</span><span><i class="lg game"></i>Game</span></div>
       <div id="calSum"></div>
       <div id="calGames"></div>`,
   });
@@ -1866,7 +1942,7 @@ function openCalendar() {
       const gm = gameOn(ds), acts = day?.activity || [];
       cells += `<button class="cal-day ${cls} ${ds === today ? 'today' : ''} ${ds === ui.date ? 'sel' : ''} ${ds > today ? 'future' : ''} ${gm ? 'game' : ''}" data-x="day" data-d="${ds}">
         <span class="cal-n">${d}</span>${gm ? `<img class="cal-logo" src="${teamLogo(gm)}" alt="${esc(gm.opp)}">` : ''}<span class="cal-c">${t ? (t.cal >= 1000 ? (t.cal / 1000).toFixed(1) + 'k' : Math.round(t.cal)) : gm ? '' : acts.includes('lift') ? '🏋️' : acts.includes('practice') ? '🏀' : ''}</span>
-        <span class="cal-mk">${eps[ds] ? '<i class="mk gut"></i>' : ''}${offs.has(ds) ? '<i class="mk feel"></i>' : ''}${day && (day.sleepMin != null || day.recovery != null) ? '<i class="mk sleep"></i>' : ''}</span></button>`;
+        <span class="cal-mk">${eps[ds] ? '<i class="mk gut"></i>' : ''}${offs.has(ds) ? '<i class="mk feel"></i>' : ''}${day && (day.sleepMin != null || day.recovery != null) ? '<i class="mk sleep"></i>' : ''}${day?.period && periodOn() ? '<i class="mk period"></i>' : ''}</span></button>`;
     }
     s.$('#calGrid').innerHTML = cells;
     const avg = k => logged.length ? logged.reduce((a, t) => a + t[k], 0) / logged.length : 0;
@@ -2101,7 +2177,6 @@ function splash(first) {
   const note = first ? 'Tap ＋ to log your first meal'
     : now === '11:11' ? "✨ It's 11:11. Make a wish"
     : gm ? `🏀 Game day ${vsAt(gm)} ${esc(gm.opp)} · ${gameTime(gm)}`
-    : n === 11 || n === 111 ? `🍀 ${n} days in a row. Lucky number`
     : n >= 2 ? `🔥 ${n} days logged in a row`
     : preps >= 1 ? `🥡 ${fmt(preps)} meal-prep container${preps === 1 ? '' : 's'} ready`
     : todayCal ? `${fmt(todayCal)} cal logged so far today`

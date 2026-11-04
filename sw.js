@@ -1,6 +1,6 @@
 // Offline support. App files: network first (so updates show up right away),
 // falling back to cache. Libraries from CDNs: cache first.
-const CACHE = 'pulse-v8';
+const CACHE = 'pulse-v9';
 const SHELL = ['./', 'index.html', 'styles.css', 'config.js', 'manifest.webmanifest',
   'js/app.js', 'js/db.js', 'js/util.js', 'js/charts.js', 'js/patterns.js', 'js/lookup.js', 'js/sync.js', 'js/share-image.js', 'js/games.js', 'js/health.js',
   'icons/icon-192.png', 'icons/apple-touch-icon.png'];

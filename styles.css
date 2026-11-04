@@ -425,6 +425,7 @@ textarea { resize: vertical; }
 .mk.gut { background: var(--bad); }
 .mk.sleep { background: var(--purple-3); }
 .mk.feel { background: var(--warn); }
+.mk.period { background: #E77FA8; }
 .lg { display: inline-block; width: 12px; height: 12px; border-radius: 4px; }
 .lg.on { background: color-mix(in srgb, var(--good) 45%, var(--card)); }
 .lg.under { background: color-mix(in srgb, var(--c) 40%, var(--card)); }
@@ -538,3 +539,11 @@ textarea { resize: vertical; }
 .guide li { margin-bottom: 10px; }
 .guide pre { background: var(--lav-3); border-radius: 10px; padding: 10px 12px; font-size: 13px; white-space: pre-wrap; margin: 6px 0 0; }
 .guide code { background: var(--lav-3); border-radius: 6px; padding: 1px 5px; }
+
+/* period: one quiet row */
+.period-row { display: flex; align-items: center; gap: 10px; width: calc(100% - 32px); margin: 4px 16px 12px; padding: 12px 16px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); color: var(--text); font: inherit; font-size: 15px; font-weight: 600; text-align: left; }
+.period-row.on { display: block; border-color: #E77FA855; }
+.pr-top { display: flex; justify-content: space-between; align-items: center; }
+.pr-x { border: 0; background: none; color: var(--muted); font-size: 14px; padding: 2px 4px; }
+.pr-flow { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; }
+.pr-flow .chip.on { background: #E77FA8; border-color: #E77FA8; }
