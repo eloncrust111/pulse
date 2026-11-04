@@ -1,7 +1,7 @@
 // Free, keyless helpers: Open Food Facts (barcode + name search), a live
 // barcode scanner, and on-device OCR for nutrition labels.
 const OFF = 'https://world.openfoodfacts.org';
-const FIELDS = 'code,product_name,product_name_en,brands,serving_quantity,serving_size,nutriments';
+const FIELDS = 'code,product_name,product_name_en,brands,serving_quantity,serving_size,nutriments,allergens_tags,traces_tags,labels_tags';
 const H5Q = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
 const TESS = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
 
@@ -35,7 +35,17 @@ function offToFood(p) {
     p: v(n.proteins_100g), c: v(n.carbohydrates_100g), f: v(n.fat_100g),
     fiber: v(n.fiber_100g), sugar: v(n.sugars_100g),
     sodium: n.sodium_100g == null ? '' : Math.round(n.sodium_100g * 1000 * k),
+    gf: glutenStatus(p),
   };
+}
+
+// 'no' = contains gluten, 'maybe' = may contain, 'yes' = labeled gluten-free, '' = unknown.
+function glutenStatus(p) {
+  const has = (list, re) => (list || []).some(t => re.test(t));
+  if (has(p.allergens_tags, /gluten|wheat|barley|rye/)) return 'no';
+  if (has(p.traces_tags, /gluten|wheat|barley|rye/)) return 'maybe';
+  if (has(p.labels_tags, /gluten-free|no-gluten|sans-gluten/)) return 'yes';
+  return '';
 }
 
 export async function offBarcode(code) {

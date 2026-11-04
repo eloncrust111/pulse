@@ -50,7 +50,8 @@ const TAG_WORDS = [
   ['Acidic', /orange|lemon|\blime|grapefruit|tomato|marinara|salsa|pineapple|vinegar|citrus|ketchup/i],
 ];
 export function guessTags(name = '') {
-  return TAG_WORDS.filter(([, re]) => re.test(name)).map(([t]) => t);
+  const gf = /gluten[- ]?free|\bgf\b/i.test(name);
+  return TAG_WORDS.filter(([t, re]) => re.test(name) && !(gf && t === 'Gluten')).map(([t]) => t);
 }
 
 const mean = a => a.reduce((s, x) => s + x, 0) / a.length;

@@ -2,10 +2,11 @@ import * as db from './db.js';
 import * as sync from './sync.js';
 import { $, $$, esc, uid, dateStr, timeStr, parseDate, addDays, toTs, fmtDay, fmtTime, fmtSleep, num, optNum, fmt,
   perGram, scale, sumMacros, recipeInfo, fileToDataURL } from './util.js';
-import { barChart, lineChart } from './charts.js';
+import { barChart, lineChart, sleepChart } from './charts.js';
 import { analyzeGut, guessTags, compareDays, median } from './patterns.js';
 import { offSearch, offBarcode, startScanner, readLabel } from './lookup.js';
 import { drawSummary } from './share-image.js';
+import { GAMES, gameOn, nextGame, teamLogo } from './games.js';
 
 // ---------- constants ----------
 const MEALS = [
@@ -19,7 +20,16 @@ const TAGS = ['Dairy', 'Gluten', 'Spicy', 'Fried / greasy', 'Caffeine', 'Artific
   'Beans / legumes', 'High fiber', 'Red meat', 'Carbonated', 'Protein powder', 'Onion / garlic', 'Acidic'];
 const SYMPTOMS = ['Stomach ache', 'Bloating', 'Cramps', 'Nausea', 'Gas', 'Heartburn', 'Reflux', 'Diarrhea', 'Constipation', 'Sharp pain', 'Urgency'];
 const CONTEXT = ['Stressed', 'Period', 'Hard workout', 'Competition', 'Traveling', 'Poor sleep', 'Ate quickly', 'Big meal',
-  'Ate late', 'Not enough water', 'Ibuprofen / pain meds', 'Sick'];
+  'Ate late', 'Not enough water', 'Ibuprofen / pain meds', 'Sick', 'Ate food I didn\'t make', 'Possible gluten cross-contact'];
+// Gluten status for celiac: 'yes' gluten-free, 'maybe' may contain, 'no' contains gluten, '' not checked.
+const GF = {
+  yes: { b: '✅', t: 'Gluten-free', cls: 'gf-yes' },
+  maybe: { b: '⚠️', t: 'May contain gluten', cls: 'gf-maybe' },
+  no: { b: '🚫', t: 'Contains gluten', cls: 'gf-no' },
+  '': { b: '❔', t: 'Not checked', cls: 'gf-unk' },
+};
+const ACTIVITIES = [['practice', '🏀', 'Practice'], ['lift', '🏋️', 'Lift'], ['rest', '😌', 'Rest day']];
+const MED_TIMES = ['Morning', 'With food', 'Night', 'Anytime'];
 const WHERE = ['Upper stomach', 'Lower stomach', 'All over'];
 const DURATION = ['Under 30 min', '1–2 hours', 'Several hours', 'All day'];
 const SEVERITY = [
@@ -163,7 +173,38 @@ function lastGrams(kind, id) {
 }
 
 // A food's own tags, or ones guessed from its name if none were set.
-const foodTags = f => f ? (f.tags?.length ? f.tags : guessTags(f.name + ' ' + (f.brand || ''))) : [];
+function foodTags(f) {
+  if (!f) return [];
+  const t = f.tags?.length ? [...f.tags] : guessTags(f.name + ' ' + (f.brand || ''));
+  if (f.gf === 'yes') return t.filter(x => x !== 'Gluten');
+  if ((f.gf === 'no' || f.gf === 'maybe') && !t.includes('Gluten')) t.push('Gluten');
+  return t;
+}
+
+// ---------- gluten (celiac) ----------
+const gfOn = () => !!profile()?.glutenFree;
+function gfStatus(kind, obj) {
+  if (!obj) return '';
+  if (kind === 'food') return obj.gf || '';
+  const st = (obj.ingredients || []).map(i => getFood(i.foodId)?.gf || '');
+  if (!st.length) return '';
+  return st.includes('no') ? 'no' : st.includes('maybe') ? 'maybe' : st.every(s => s === 'yes') ? 'yes' : '';
+}
+const gfPicker = cur => `<div class="gf-pick">${['yes', 'maybe', 'no', ''].map(k => `<button class="${(cur || '') === k ? 'on ' + GF[k].cls : ''}" data-x="gf" data-v="${k}">${GF[k].b}<span>${k === 'yes' ? 'Gluten-free' : k === 'maybe' ? 'May contain' : k === 'no' ? 'Has gluten' : 'Not sure'}</span></button>`).join('')}</div>`;
+const looksGlutenish = obj => guessTags(obj?.name || '').includes('Gluten');
+function gfBadge(kind, obj) {
+  if (!gfOn()) return '';
+  const s = gfStatus(kind, obj);
+  return s ? `<span class="gf ${GF[s].cls}">${s === 'yes' ? 'GF' : s === 'no' ? 'Gluten' : 'May contain'}</span>` : '';
+}
+function gfWarning(kind, obj) {
+  if (!gfOn() || !obj) return '';
+  const s = gfStatus(kind, obj);
+  if (s === 'no') return `<p class="tip gf-tip no">🚫 <b>Contains gluten.</b> ${kind === 'recipe' ? 'One of the ingredients is marked as containing gluten.' : 'This food is marked as containing gluten.'}</p>`;
+  if (s === 'maybe') return `<p class="tip gf-tip">⚠️ <b>May contain gluten</b> (shared equipment or traces).</p>`;
+  if (!s && looksGlutenish(obj)) return `<p class="tip gf-tip">❔ The name sounds like it could have gluten. Check the label and mark it in the food's details.</p>`;
+  return '';
+}
 function entryTags(e) {
   if (e.kind === 'food') return foodTags(getFood(e.refId));
   if (e.kind === 'recipe') {
@@ -264,13 +305,154 @@ function screenToday() {
     </div>
     <div class="mbs">${macroBar('Protein', 'p', t.p, g.p)}${macroBar('Carbs', 'c', t.c, g.c)}${macroBar('Fat', 'f', t.f, g.f)}</div>
   </section>
+  ${gameBanner(d)}
+  ${activityRow(d, day)}
+  ${gfPrompt()}
   ${prepCard()}
   ${MEALS.map(m => mealCard(m, ents.filter(e => e.meal === m.id), d)).join('')}
   ${waterCard(day, g)}
+  ${sleepCard(d, day)}
   ${bodyCard(day)}
+  ${medsCard(d, day)}
   ${feelCard(d)}
   ${gutCard(d)}
+  ${journalCard(day)}
   <div class="spacer"></div>`;
+}
+
+// ---------- games & training days ----------
+const gameTime = g => g.time ? fmtTime(g.time) : 'Time TBA';
+const vsAt = g => g.home ? 'vs' : '@';
+function gameBanner(date) {
+  const g = gameOn(date);
+  if (g) return `<section class="game-banner">
+    <img class="team-logo" src="${teamLogo(g)}" alt="">
+    <div class="grow"><div class="gb-k">🏀 Game day</div><div class="gb-t">${vsAt(g)} ${esc(g.opp)}</div>
+    <div class="gb-s">${g.result ? esc(g.result) : gameTime(g)} · ${esc(g.venue || g.where)}</div></div></section>`;
+  const n = nextGame(addDays(date, 1));
+  if (!n || date < dateStr()) return '';
+  const days = Math.round((parseDate(n.date) - parseDate(date)) / 864e5);
+  if (days > 6) return '';
+  return `<button class="next-game" data-act="calendar"><img class="team-logo sm" src="${teamLogo(n)}" alt="">
+    <span class="grow">Next game <b>${days === 1 ? 'tomorrow' : parseDate(n.date).toLocaleDateString(undefined, { weekday: 'long' })}</b> ${vsAt(n)} ${esc(n.opp)}</span><span class="muted">${gameTime(n)}</span></button>`;
+}
+function activityRow(date, day) {
+  const on = new Set(day.activity || []);
+  return `<div class="act-row">${ACTIVITIES.map(([k, e, l]) => `<button class="act-chip ${on.has(k) ? 'on' : ''}" data-act="activity" data-k="${k}">${e} ${l}</button>`).join('')}</div>`;
+}
+function toggleActivity(k) {
+  const d = { ...(db.get('days', ui.date) || { id: ui.date, date: ui.date }) };
+  const on = new Set(d.activity || []);
+  if (on.has(k)) on.delete(k);
+  else { on.add(k); if (k === 'rest') { on.delete('practice'); on.delete('lift'); } else on.delete('rest'); }
+  d.activity = [...on];
+  db.put('days', d);
+}
+
+// Asked once, so friends without celiac don't get gluten warnings.
+function gfPrompt() {
+  if (profile()?.glutenFree != null) return '';
+  return `<section class="card ask-card"><b>🌾 Do you eat gluten-free?</b>
+    <p class="muted small">If you have celiac or avoid gluten, Pulse will flag foods and recipes that contain or may contain gluten.</p>
+    <div class="btn-row"><button class="btn primary grow" data-act="gfSet" data-v="1">Yes, gluten-free</button><button class="btn soft grow" data-act="gfSet" data-v="0">No</button></div></section>`;
+}
+
+// ---------- sleep ----------
+// Bedtimes as minutes after noon, so 9 PM and 1 AM sort and average sensibly.
+const toMin = t => { const [h, m] = t.split(':').map(Number); return ((h + 12) % 24) * 60 + m; };
+const fromMin = x => { x = ((Math.round(x) % 1440) + 1440) % 1440; const h = (Math.floor(x / 60) + 12) % 24; return `${String(h).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
+const bedGoal = () => profile()?.bedGoal || '21:00';
+function sleepStreak() {
+  let d = dateStr(), n = 0;
+  if (!db.get('days', d)?.bed) d = addDays(d, -1);
+  for (;;) {
+    const b = db.get('days', d)?.bed;
+    if (!b || Math.abs(toMin(b) - toMin(bedGoal())) > 30) break;
+    n++; d = addDays(d, -1);
+  }
+  return n;
+}
+function sleepCard(date, day) {
+  const last7 = Array.from({ length: 7 }, (_, i) => db.get('days', addDays(date, -i))).filter(x => x?.bed);
+  const near = last7.filter(x => Math.abs(toMin(x.bed) - toMin(bedGoal())) <= 30).length;
+  const st = date === dateStr() ? sleepStreak() : 0;
+  return `<section class="card sleep-card tap" data-act="body">
+    <div class="card-head"><h3>🌙 Sleep</h3><span class="link">${day.sleepMin != null || day.bed ? 'Edit' : 'Log'}</span></div>
+    ${day.sleepMin != null || day.bed ? `<div class="sleep-main">
+        <div><div class="sleep-big">${day.sleepMin != null ? fmtSleep(day.sleepMin) : '–'}</div><div class="muted small">${day.sleepPerf != null ? `${day.sleepPerf}% sleep performance` : 'last night'}</div></div>
+        ${day.bed ? `<div class="sleep-times"><span>🛏️ ${fmtTime(day.bed)}</span><span>☀️ ${day.wake ? fmtTime(day.wake) : '–'}</span></div>` : ''}
+      </div>` : `<p class="muted small">Log when you went to bed and woke up. Pulse tracks how close you stay to your ${fmtTime(bedGoal())} bedtime.</p>`}
+    ${last7.length ? `<div class="sleep-goal"><span>🎯 Near your ${fmtTime(bedGoal())} bedtime <b>${near} of the last ${last7.length} nights</b></span>${st >= 2 ? `<span class="streak">🔥 ${st} in a row</span>` : ''}</div>` : ''}
+  </section>`;
+}
+
+// ---------- meds & vitamins ----------
+const medList = () => profile()?.meds || [];
+function medsCard(date, day) {
+  const meds = medList(), taken = day.meds || {};
+  if (!meds.length) return `<section class="card"><div class="card-head"><h3>💊 Meds & vitamins</h3></div>
+    <p class="muted small">Add what you take every day, then check things off with one tap.</p>
+    <button class="btn soft full" data-act="editMeds">＋ Set up my list</button></section>`;
+  const done = meds.filter(m => taken[m.id]).length;
+  const groups = MED_TIMES.map(t => [t, meds.filter(m => (m.when || 'Anytime') === t)]).filter(g => g[1].length);
+  return `<section class="card meds">
+    <div class="card-head"><h3>💊 Meds & vitamins</h3><span class="muted small">${done === meds.length ? '✅ All done' : `${done} of ${meds.length}`}</span></div>
+    ${groups.map(([t, list]) => `<div class="med-group">${groups.length > 1 ? `<div class="med-when">${t}</div>` : ''}${list.map(m => `<button class="med ${taken[m.id] ? 'on' : ''}" data-act="med" data-id="${m.id}">
+      <span class="med-box">${taken[m.id] ? '✓' : ''}</span><span class="grow">${esc(m.name)}</span>${taken[m.id] ? `<span class="muted tiny">${fmtTime(taken[m.id])}</span>` : ''}</button>`).join('')}</div>`).join('')}
+    <button class="link-btn" data-act="editMeds">Edit list</button>
+  </section>`;
+}
+function toggleMed(id) {
+  const d = { ...(db.get('days', ui.date) || { id: ui.date, date: ui.date }) };
+  const taken = { ...(d.meds || {}) };
+  if (taken[id]) delete taken[id]; else taken[id] = ui.date === dateStr() ? timeStr() : '12:00';
+  d.meds = taken;
+  db.put('days', d);
+}
+function openMeds() {
+  let meds = medList().map(m => ({ ...m }));
+  const s = openSheet({
+    title: 'Meds & vitamins', full: true, lock: true,
+    body: `<p class="muted small">Only you see this list. Add each thing you take and when you usually take it.</p>
+      <div id="ml"></div>
+      <div class="add-med"><input id="mn" placeholder="e.g. Vitamin D, Iron, Zyrtec" autocomplete="off">
+      <div class="chips" id="mw">${MED_TIMES.map((t, i) => `<button class="chip sm ${i === 0 ? 'on' : ''}" data-x="when" data-v="${t}">${t}</button>`).join('')}</div>
+      <button class="btn soft full" data-x="add">＋ Add</button></div>`,
+    footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save list</button>`,
+  });
+  let when = MED_TIMES[0];
+  const draw = () => {
+    s.$('#ml').innerHTML = meds.length ? meds.map((m, i) => `<div class="kv-row"><span>💊 ${esc(m.name)} <span class="muted tiny">${m.when}</span></span><button class="icon-btn" data-x="rm" data-n="${i}" aria-label="Remove">✕</button></div>`).join('')
+      : `<p class="muted small center">Nothing added yet.</p>`;
+  };
+  s.on('click', '[data-x="when"]', el => { when = el.dataset.v; s.$$('[data-x="when"]').forEach(b => b.classList.toggle('on', b === el)); });
+  s.on('click', '[data-x="add"]', () => {
+    const name = s.$('#mn').value.trim();
+    if (!name) return s.$('#mn').focus();
+    meds.push({ id: uid(), name, when });
+    s.$('#mn').value = ''; s.$('#mn').focus(); draw();
+  });
+  s.on('click', '[data-x="rm"]', el => { meds.splice(+el.dataset.n, 1); draw(); });
+  s.on('click', '[data-x="save"]', () => { saveProfile({ meds }); s.close(); toast('Saved'); });
+  draw();
+}
+
+// ---------- journal ----------
+function journalCard(day) {
+  return `<section class="card tap" data-act="journal">
+    <div class="card-head"><h3>📓 Journal</h3><span class="link">${day.notes ? 'Edit' : 'Write'}</span></div>
+    ${day.notes ? `<p class="journal-txt">${esc(day.notes)}</p>` : `<p class="muted small">How practice went, soreness, mood, anything on your mind.</p>`}
+  </section>`;
+}
+function openJournal(date = ui.date) {
+  const d = { ...(db.get('days', date) || { id: date, date }) };
+  const s = openSheet({
+    title: `Journal · ${fmtDay(date)}`, full: true, lock: true,
+    body: `<textarea id="jt" class="journal-in" rows="12" placeholder="How did today go?">${esc(d.notes || '')}</textarea>`,
+    footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  s.on('click', '[data-x="save"]', () => { d.notes = s.$('#jt').value.trim(); db.put('days', d); s.close(); toast('Saved'); });
+  s.$('#jt').focus();
 }
 
 // ---------- meal prep ----------
@@ -381,20 +563,19 @@ function waterCard(day, g) {
 
 function bodyCard(d) {
   const items = [
-    ['😴', 'Sleep', d.sleepMin != null ? fmtSleep(d.sleepMin) : null],
+    ['🫀', 'Resting HR', d.rhr != null ? d.rhr + ' bpm' : null],
+    ['🔥', 'Burned', d.burned != null ? fmt(d.burned) + ' cal' : null],
     ['💚', 'Recovery', d.recovery != null ? d.recovery + '%' : null],
     ['⚡', 'Strain', d.strain != null ? d.strain : null],
-    ['🔥', 'Burned', d.burned != null ? fmt(d.burned) : null],
     ['💓', 'HRV', d.hrv != null ? d.hrv + ' ms' : null],
     ['👟', 'Steps', d.steps != null ? fmt(d.steps) : null],
-    ['⚖️', 'Weight', d.weight != null ? d.weight + ' lb' : null],
+    ['⚖️', 'Weight', d.weight != null && profile()?.showWeight ? d.weight + ' lb' : null],
     ['🔋', 'Energy', d.energy ? d.energy + '/5' : null],
   ].filter(i => i[2] != null);
   return `<section class="card tap" data-act="body">
-    <div class="card-head"><h3>Recovery & sleep</h3><span class="link">${items.length ? 'Edit' : 'Log'}</span></div>
-    ${items.length ? `<div class="stat-grid">${items.map(i => `<div class="stat"><span class="stat-ico">${i[0]}</span><div><div class="stat-v">${esc(i[2])}</div><div class="stat-l">${i[1]}</div></div></div>`).join('')}</div>
-      ${d.notes ? `<p class="note">“${esc(d.notes)}”</p>` : ''}`
-    : `<p class="muted small">Sleep, recovery and strain from your wearable, calories burned, steps, and notes.</p>`}
+    <div class="card-head"><h3>⌚ Recovery</h3><span class="link">${items.length ? 'Edit' : 'Log'}</span></div>
+    ${items.length ? `<div class="stat-grid">${items.map(i => `<div class="stat"><span class="stat-ico">${i[0]}</span><div><div class="stat-v">${esc(i[2])}</div><div class="stat-l">${i[1]}</div></div></div>`).join('')}</div>`
+    : `<p class="muted small">Heart rate, calories burned, recovery and strain from your Whoop or Apple Watch, all in one place.</p>`}
   </section>`;
 }
 
@@ -436,7 +617,7 @@ function foodListHTML() {
     <button class="btn primary" data-act="newFood">＋ Add your first food</button></div>`;
   if (!list.length) return `<p class="muted center">No foods match “${esc(ui.foodQ)}”.</p>`;
   return list.map(f => `<button class="row" data-act="food" data-id="${f.id}">${thumb(f.photo, '🥣')}
-    <div class="row-main"><div class="row-name">${esc(f.name)}${f.fav ? ' <span class="star">★</span>' : ''}</div><div class="row-sub">${foodSub(f)}</div></div><span class="chev">›</span></button>`).join('');
+    <div class="row-main"><div class="row-name">${esc(f.name)}${f.fav ? ' <span class="star">★</span>' : ''}${gfBadge('food', f)}</div><div class="row-sub">${foodSub(f)}</div></div><span class="chev">›</span></button>`).join('');
 }
 function screenFoods() {
   return `${header('My Foods', `${db.list('foods').length} saved`)}
@@ -463,7 +644,7 @@ function recipeListHTML() {
     const info = recipeInfo(r, getFood);
     const per = info.servings ? scale(info.total, 1 / info.servings) : scale(info.per, 100);
     return `<button class="row" data-act="recipe" data-id="${r.id}">${thumb(r.photo, '🍲')}
-      <div class="row-main"><div class="row-name">${esc(r.name)}</div>
+      <div class="row-main"><div class="row-name">${esc(r.name)}${gfBadge(r.ingredients ? 'recipe' : 'food', r)}</div>
       <div class="row-sub">${fmt(per.cal)} cal ${info.servings ? '/ serving' : '/ 100 g'} · ${macroLine(per)}</div></div><span class="chev">›</span></button>`;
   }).join('') || `<p class="muted center">No recipes match.</p>`;
 }
@@ -555,6 +736,12 @@ function screenTrends() {
     </section>
 
     <section class="card">
+      <div class="card-head"><h3>🌙 Sleep schedule</h3><span class="muted small">${(() => { const b = days.filter(d => d.bed); return b.length ? `${b.filter(d => Math.abs(toMin(d.bed) - toMin(bedGoal())) <= 30).length}/${b.length} near ${fmtTime(bedGoal())}` : ''; })()}</span></div>
+      ${sleepChart({ nights: days.map(d => d.bed && d.wake ? { bed: toMin(d.bed), wake: toMin(d.wake) < toMin(d.bed) ? toMin(d.wake) + 1440 : toMin(d.wake) } : null), labels, goal: toMin(bedGoal()), fmtT: v => fmtTime(fromMin(v)).replace(':00', '') })}
+      <p class="muted tiny center">Each bar runs from bedtime (top) to wake-up. The green band is within 30 min of your bedtime goal.</p>
+    </section>
+
+    <section class="card">
       <div class="card-head"><h3>Recovery</h3><span class="muted small">${recov.length ? 'avg ' + Math.round(recov.reduce((a, b) => a + b, 0) / recov.length) + '%' : ''}</span></div>
       ${barChart({ values: dv('recovery').map(x => x || 0), labels, dates, colorFn: x => x >= 67 ? 'var(--good)' : x >= 34 ? 'var(--mid)' : 'var(--bad)', fmtY: x => x + '%' })}
     </section>
@@ -564,7 +751,7 @@ function screenTrends() {
       ${barChart({ values: dv('strain').map(x => x || 0), labels, dates, color: 'var(--c)', fmtY: x => Math.round(x * 10) / 10 })}
     </section>
 
-    ${weightCard(dates, labels)}
+    ${profile()?.showWeight ? weightCard(dates, labels) : ''}
 
     ${top.length ? `<section class="card"><h3>Most-logged foods</h3>${top.map(([name, c]) => `<div class="kv-row"><span>${esc(name)}</span><span class="muted">${c.n}×</span></div>`).join('')}</section>` : ''}
 
@@ -697,6 +884,7 @@ function feelTrends(dates) {
 }
 
 // ===== ME =====
+const switchRow = (k, label, sub) => `<button class="switch-row" data-act="toggle" data-k="${k}"><span class="grow">${label}<div class="muted tiny">${sub}</div></span><span class="switch ${profile()?.[k] ? 'on' : ''}"><i></i></span></button>`;
 function screenMe() {
   const p = profile() || {}, g = goals();
   const cloud = sync.enabled && sync.currentUser();
@@ -705,9 +893,18 @@ function screenMe() {
   return `${header('Me')}
   <div class="pad">
     <section class="card profile">
-      <div class="avatar">${esc(firstName()[0]?.toUpperCase() || '?')}</div>
+      <div class="avatar ${p.number ? 'jersey' : ''}">${p.number ? esc(p.number) : esc(firstName()[0]?.toUpperCase() || '?')}</div>
       <div class="grow"><input class="name-in" value="${esc(p.name || '')}" placeholder="Your name" data-change="name" aria-label="Your name">
       <div class="muted small">${cloud ? esc(cloud.email) : 'Saved on this phone'}</div></div>
+      <div class="field num-field"><label>Jersey #</label><input inputmode="numeric" maxlength="2" value="${esc(p.number || '')}" placeholder="–" data-change="number" aria-label="Jersey number"></div>
+    </section>
+
+    <section class="card">
+      <h3>Your setup</h3>
+      ${switchRow('glutenFree', '🌾 I eat gluten-free', 'Flags foods and recipes that contain or may contain gluten.')}
+      ${switchRow('showWeight', '⚖️ Show body weight', 'Off by default. Turns on the weight tracker in Trends and on your recovery card.')}
+      <div class="kv-row"><span>🌙 Bedtime goal<div class="muted tiny">Sleep card tracks how close you stay to it</div></span><input type="time" class="time-in" value="${bedGoal()}" data-change="bedGoal" aria-label="Bedtime goal"></div>
+      <button class="btn soft full mt" data-act="editMeds">💊 Edit meds & vitamins</button>
     </section>
 
     <section class="card">
@@ -776,6 +973,12 @@ const acts = {
   signOut: async () => { if (await confirmSheet('Sign out of Pulse on this phone?', 'Sign out', false)) { await sync.signOut(); location.reload(); } },
   backup: () => exportBackup(),
   shareImg: () => openShareImage(),
+  activity: d => toggleActivity(d.k),
+  gfSet: d => { saveProfile({ glutenFree: d.v === '1' }); if (d.v === '1') toast('Gluten warnings on'); },
+  med: d => toggleMed(d.id),
+  editMeds: () => openMeds(),
+  journal: () => openJournal(),
+  toggle: d => saveProfile({ [d.k]: !profile()?.[d.k] }),
   eatPrep: d => eatPrep(d.id),
   editPrep: d => openPrep({ prep: db.get('preps', d.id) }),
   logWeight: () => openWeight(),
@@ -788,6 +991,8 @@ const changes = {
   pickDate: el => { if (el.value) { ui.date = el.value; render(); } },
   goal: el => { const g = goals(); g[el.dataset.k] = num(el.value); saveProfile({ goals: g }); },
   name: el => saveProfile({ name: el.value.trim() }),
+  number: el => saveProfile({ number: el.value.replace(/[^0-9]/g, '').slice(0, 2) }),
+  bedGoal: el => { if (el.value) saveProfile({ bedGoal: el.value }); },
   restore: el => restoreBackup(el.files[0]),
 };
 const outsideSheet = el => !el.closest('.sheet-wrap');
@@ -895,7 +1100,7 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
     s.$('#plist').innerHTML = (preps.length ? `<h4 class="sec">🥡 From your meal prep</h4>${preps.map(p => `<button class="row" data-x="prep" data-id="${p.id}">
         ${thumb(p.photo, '🥡')}<div class="row-main"><div class="row-name">${esc(p.name)}</div><div class="row-sub">1 container · ${fmt(prepMacros(p).cal)} cal · ${fmt(p.left)} left</div></div><span class="row-plus">＋</span></button>`).join('')}<h4 class="sec">Recent</h4>` : '')
       + (rows.length ? rows.map(([k, o, sub]) => `<button class="row" data-x="pick" data-k="${k}" data-id="${o.id}">
-        ${thumb(o.photo, k === 'recipe' ? '🍲' : '🥣')}<div class="row-main"><div class="row-name">${esc(o.name)}${o.fav ? ' <span class="star">★</span>' : ''}</div><div class="row-sub">${sub}</div></div><span class="row-plus">＋</span></button>`).join('')
+        ${thumb(o.photo, k === 'recipe' ? '🍲' : '🥣')}<div class="row-main"><div class="row-name">${esc(o.name)}${o.fav ? ' <span class="star">★</span>' : ''}${gfBadge(k, o)}</div><div class="row-sub">${sub}</div></div><span class="row-plus">＋</span></button>`).join('')
       : `<div class="empty small"><p>${q ? `Nothing saved called “${esc(q)}”.` : tab === 'recipes' ? 'No recipes yet.' : 'No saved foods yet.'}</p>
          <button class="btn primary" data-x="new">📷 Add it from the label</button>${q ? `<button class="btn soft" data-x="online">🔎 Search online for “${esc(q)}”</button>` : ''}</div>`);
   }
@@ -943,6 +1148,7 @@ function openAmount({ item, entry = null, prep = null, meal, date, onAdded }) {
   const s = openSheet({
     title: entry ? 'Edit entry' : 'How much?',
     body: `<div class="amt-food">${thumb(item.photo, item.kind === 'recipe' ? '🍲' : '🥣')}<div><div class="amt-name">${esc(item.name)}</div><div class="muted small">${esc(item.brand || '')}</div></div></div>
+      ${gfWarning(item.kind, item.kind === 'food' ? getFood(item.id) : db.get('recipes', item.id))}
       ${sus ? `<p class="tip">⚠️ Heads up: stomach trouble followed this ${sus.hit} of the ${sus.eaten} times you had it.</p>` : ''}
       <div class="amt-input"><input id="amt" type="text" inputmode="decimal" value="${fmtIn(startG)}" autocomplete="off" aria-label="Amount">
         <div class="seg unit">${`<button data-x="unit" data-u="g" class="on">grams</button>`}${item.servingG ? `<button data-x="unit" data-u="s">${prep ? 'containers' : 'servings'}</button>` : ''}</div></div>
@@ -1048,6 +1254,7 @@ function openFoodForm({ food = null, prefill = {}, onSaved } = {}) {
         ${fld('fiber', 'Fiber', 'g')}${fld('sugar', 'Total sugars', 'g')}${fld('sodium', 'Sodium', 'mg')}
       </div>
       <div class="calc-hint" id="hint"></div>
+      ${gfOn() ? `<h4 class="sec">🌾 Gluten <span class="muted">— check the allergen line on the label</span></h4>${gfPicker(f.gf)}` : ''}
       <h4 class="sec">Tags <span class="muted">— helps find stomach triggers</span></h4>
       <div class="chips">${TAGS.map(t => `<button class="chip sm ${tags.has(t) ? 'on' : ''}" data-x="tag" data-t="${esc(t)}">${esc(t)}</button>`).join('')}</div>
       <label class="check"><input type="checkbox" id="ff-fav" ${f.fav ? 'checked' : ''}> ★ Favorite (shows at the top)</label>
@@ -1093,6 +1300,8 @@ function openFoodForm({ food = null, prefill = {}, onSaved } = {}) {
     } finally { btn.disabled = false; }
   }
   s.on('click', '[data-x="ocr"]', runOCR);
+  let gfSel = f.gf || '';
+  s.on('click', '[data-x="gf"]', el => { gfSel = el.dataset.v; s.$$('[data-x="gf"]').forEach(b => b.className = b === el ? 'on ' + GF[gfSel].cls : ''); });
   // New foods get tags guessed from the name until she taps a tag herself.
   let tagsTouched = !!food;
   function autoTags() {
@@ -1111,6 +1320,7 @@ function openFoodForm({ food = null, prefill = {}, onSaved } = {}) {
     s.$$('[data-t]').forEach(i => { f[i.dataset.t] = i.value.trim(); });
     s.$$('[data-k]').forEach(i => { f[i.dataset.k] = optNum(i.value) ?? ''; });
     f.tags = [...tags];
+    f.gf = gfSel;
     f.fav = s.$('#ff-fav').checked;
     if (!f.name) return toast('Give it a name');
     if (!(num(f.servingG) > 0)) return toast('Add the serving size in grams');
@@ -1138,6 +1348,7 @@ function openFoodDetail(id) {
       <h2 class="detail-name">${esc(f.name)}</h2>
       <div class="muted center">${esc(f.brand || '')}</div>
       ${(f.tags || []).length ? `<div class="chips center-chips">${f.tags.map(t => `<span class="chip sm">${esc(t)}</span>`).join('')}</div>` : ''}
+      ${gfOn() ? gfPicker(f.gf) : ''}
       <div class="card calc">
         <label for="cg">How much did you weigh?</label>
         <div class="unit-in big"><input id="cg" inputmode="decimal" placeholder="0"><span>g</span></div>
@@ -1154,6 +1365,12 @@ function openFoodDetail(id) {
     s.$('#cres').innerHTML = g ? `<div class="prev-cal"><b>${fmt(m.cal)}</b> cal</div><div>${macroLine(m)} · ${fmt(m.fiber)}g fiber</div>` : 'Type grams to see the exact macros';
   });
   s.on('click', '[data-x="fav"]', el => { db.put('foods', { ...getFood(id), fav: !el.classList.contains('on') }); el.classList.toggle('on'); });
+  s.on('click', '[data-x="gf"]', el => {
+    const v = el.dataset.v;
+    db.put('foods', { ...getFood(id), gf: v });
+    s.$$('[data-x="gf"]').forEach(b => b.className = b === el ? 'on ' + GF[v].cls : '');
+    toast(GF[v].t);
+  });
   s.on('click', '[data-x="edit"]', () => { s.close(); openFoodForm({ food: getFood(id), onSaved: x => openFoodDetail(x.id) }); });
   s.on('click', '[data-x="log"]', () => {
     const g = num(s.$('#cg').value);
@@ -1210,7 +1427,7 @@ function openOnline({ q = '', onSaved }) {
     try {
       results = await offSearch(term);
       s.$('#ores').innerHTML = results.length ? results.map((r, i) => `<button class="row" data-x="r" data-i="${i}"><span class="thumb ph">🌐</span>
-        <div class="row-main"><div class="row-name">${esc(r.name)}</div><div class="row-sub">${esc(r.brand)}${r.brand ? ' · ' : ''}${fmt(num(r.cal))} cal / ${fmt(num(r.servingG))} g</div></div><span class="row-plus">＋</span></button>`).join('')
+        <div class="row-main"><div class="row-name">${esc(r.name)}${gfBadge(r.ingredients ? 'recipe' : 'food', r)}</div><div class="row-sub">${esc(r.brand)}${r.brand ? ' · ' : ''}${fmt(num(r.cal))} cal / ${fmt(num(r.servingG))} g</div></div><span class="row-plus">＋</span></button>`).join('')
         : `<p class="muted center">No results. Try fewer words, or snap the label instead.</p>`;
     } catch (e) {
       s.$('#ores').innerHTML = `<p class="muted center">${esc(e.message || 'Search failed — check your connection.')}</p>`;
@@ -1300,6 +1517,7 @@ function openRecipeDetail(id) {
     title: '', full: true,
     body: `${r.photo ? `<img class="detail-img" src="${r.photo}" alt="">` : ''}
       <h2 class="detail-name">${esc(r.name)}</h2>
+      ${gfOn() ? `<div class="center">${gfBadge('recipe', r) || '<span class="gf gf-unk">Gluten not checked</span>'}</div>` : ''}
       <div class="totals">
         ${info.servings ? `<div class="tot-row"><span>Per serving</span><b>${fmt(info.total.cal / info.servings)} cal</b><span>${macroLine(scale(info.total, 1 / info.servings))}</span></div>` : ''}
         <div class="tot-row"><span>Per 100 g</span><b>${fmt(info.per.cal * 100)} cal</b><span>${macroLine(scale(info.per, 100))}</span></div>
@@ -1329,28 +1547,28 @@ function openBody(date) {
   const fld = (k, label, unit, ph = '') => `<div class="field"><label>${label}</label><div class="unit-in"><input data-k="${k}" inputmode="decimal" value="${d[k] ?? ''}" placeholder="${ph}"><span>${unit}</span></div></div>`;
   const s = openSheet({
     title: `Recovery · ${fmtDay(date)}`, full: true, lock: true,
-    body: `<h4 class="sec">😴 Sleep (last night)</h4>
+    body: `<h4 class="sec">🌙 Sleep (last night)</h4>
       <div class="grid2">
+        <div class="field"><label>Went to bed</label><input type="time" id="sb" value="${d.bed || ''}"></div>
+        <div class="field"><label>Woke up</label><input type="time" id="sw" value="${d.wake || ''}"></div>
         <div class="field"><label>Hours</label><div class="unit-in"><input id="sh" inputmode="numeric" value="${d.sleepMin != null ? Math.floor(d.sleepMin / 60) : ''}" placeholder="7"><span>h</span></div></div>
         <div class="field"><label>Minutes</label><div class="unit-in"><input id="sm" inputmode="numeric" value="${d.sleepMin != null ? Math.round(d.sleepMin % 60) : ''}" placeholder="45"><span>m</span></div></div>
         ${fld('sleepPerf', 'Sleep performance', '%')}
       </div>
-      <h4 class="sec">⌚ Wearable <span class="muted">(Whoop, Oura, Apple Watch…)</span></h4>
-      <div class="grid2">${fld('recovery', 'Recovery', '%')}${fld('strain', 'Strain', '/21')}${fld('burned', 'Calories burned', 'cal')}${fld('hrv', 'HRV', 'ms')}${fld('rhr', 'Resting HR', 'bpm')}</div>
-      <h4 class="sec">👟 Activity & body</h4>
-      <div class="grid2">${fld('steps', 'Steps', '')}${fld('weight', 'Weight', 'lb')}</div>
+      <p class="muted tiny">Leave hours blank and Pulse works them out from bed and wake time. If your Whoop shows actual time asleep, type that in instead.</p>
+      <h4 class="sec">⌚ Whoop / Apple Watch</h4>
+      <div class="grid2">${fld('rhr', 'Resting HR', 'bpm')}${fld('burned', 'Calories burned', 'cal')}${fld('recovery', 'Recovery', '%')}${fld('strain', 'Strain', '/21')}${fld('hrv', 'HRV', 'ms')}${fld('steps', 'Steps', '')}</div>
       <h4 class="sec">🔋 How do you feel?</h4>
-      <div class="chips energy">${[1, 2, 3, 4, 5].map(v => `<button class="chip ${energy === v ? 'on' : ''}" data-x="en" data-v="${v}">${['😴', '😕', '🙂', '😃', '🔥'][v - 1]} ${v}</button>`).join('')}</div>
-      <div class="field mt"><label>Journal</label><textarea id="dn" rows="4" placeholder="Training, soreness, mood…">${esc(d.notes || '')}</textarea></div>`,
+      <div class="chips energy">${[1, 2, 3, 4, 5].map(v => `<button class="chip ${energy === v ? 'on' : ''}" data-x="en" data-v="${v}">${['😴', '😕', '🙂', '😃', '🔥'][v - 1]} ${v}</button>`).join('')}</div>`,
     footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
   });
   s.on('click', '[data-x="en"]', el => { const v = +el.dataset.v; energy = energy === v ? 0 : v; s.$$('[data-x="en"]').forEach(b => b.classList.toggle('on', +b.dataset.v === energy)); });
   s.on('click', '[data-x="save"]', () => {
     s.$$('[data-k]').forEach(i => { d[i.dataset.k] = optNum(i.value); });
     const h = optNum(s.$('#sh').value), m = optNum(s.$('#sm').value);
-    d.sleepMin = h == null && m == null ? null : (h || 0) * 60 + (m || 0);
+    d.bed = s.$('#sb').value || null; d.wake = s.$('#sw').value || null;
+    d.sleepMin = h == null && m == null ? (d.bed && d.wake ? (toMin(d.wake) - toMin(d.bed) + 1440) % 1440 : null) : (h || 0) * 60 + (m || 0);
     d.energy = energy || null;
-    d.notes = s.$('#dn').value.trim();
     db.put('days', d);
     s.close();
     toast('Saved');
@@ -1528,8 +1746,9 @@ function openCalendar() {
     body: `<div class="cal-nav"><button class="icon-btn" data-x="prev" aria-label="Previous month">‹</button><b id="calTitle"></b><button class="icon-btn" data-x="next" aria-label="Next month">›</button></div>
       <div class="cal-grid cal-wd">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(d => `<span>${d}</span>`).join('')}</div>
       <div class="cal-grid" id="calGrid"></div>
-      <div class="cal-legend"><span><i class="lg on"></i>On target</span><span><i class="lg under"></i>Under</span><span><i class="lg over"></i>Over</span><span><i class="mk gut"></i>Stomach</span><span><i class="mk feel"></i>Felt off</span><span><i class="mk sleep"></i>Recovery logged</span></div>
-      <div id="calSum"></div>`,
+      <div class="cal-legend"><span><i class="lg on"></i>On target</span><span><i class="lg under"></i>Under</span><span><i class="lg over"></i>Over</span><span><i class="mk gut"></i>Stomach</span><span><i class="mk feel"></i>Felt off</span><span><i class="mk sleep"></i>Recovery logged</span><span>🏀 Practice</span><span>🏋️ Lift</span><span><i class="lg game"></i>Game</span></div>
+      <div id="calSum"></div>
+      <div id="calGames"></div>`,
   });
   function draw() {
     const first = parseDate(month + '-01'), y = first.getFullYear(), m = first.getMonth();
@@ -1549,8 +1768,9 @@ function openCalendar() {
       if (t) logged.push(t);
       const r = t ? t.cal / (g.cal || 1) : 0;
       const cls = !t ? '' : r < 0.9 ? 'under' : r > 1.1 ? 'over' : 'on';
-      cells += `<button class="cal-day ${cls} ${ds === today ? 'today' : ''} ${ds === ui.date ? 'sel' : ''} ${ds > today ? 'future' : ''}" data-x="day" data-d="${ds}">
-        <span class="cal-n">${d}</span><span class="cal-c">${t ? (t.cal >= 1000 ? (t.cal / 1000).toFixed(1) + 'k' : Math.round(t.cal)) : ''}</span>
+      const gm = gameOn(ds), acts = day?.activity || [];
+      cells += `<button class="cal-day ${cls} ${ds === today ? 'today' : ''} ${ds === ui.date ? 'sel' : ''} ${ds > today ? 'future' : ''} ${gm ? 'game' : ''}" data-x="day" data-d="${ds}">
+        <span class="cal-n">${d}</span>${gm ? `<img class="cal-logo" src="${teamLogo(gm)}" alt="${esc(gm.opp)}">` : ''}<span class="cal-c">${t ? (t.cal >= 1000 ? (t.cal / 1000).toFixed(1) + 'k' : Math.round(t.cal)) : gm ? '' : acts.includes('lift') ? '🏋️' : acts.includes('practice') ? '🏀' : ''}</span>
         <span class="cal-mk">${eps[ds] ? '<i class="mk gut"></i>' : ''}${offs.has(ds) ? '<i class="mk feel"></i>' : ''}${day && (day.sleepMin != null || day.recovery != null) ? '<i class="mk sleep"></i>' : ''}</span></button>`;
     }
     s.$('#calGrid').innerHTML = cells;
@@ -1559,6 +1779,10 @@ function openCalendar() {
     s.$('#calSum').innerHTML = `<div class="card"><div class="big-stats">
       <div><b>${logged.length}</b><span>days logged</span></div><div><b>${logged.length ? fmt(avg('cal')) : '–'}</b><span>avg cal</span></div>
       <div><b>${logged.length ? fmt(avg('p')) + 'g' : '–'}</b><span>avg protein</span></div><div><b>${nEp}</b><span>symptom logs</span></div></div></div>`;
+    const gms = GAMES.filter(g => g.date.startsWith(month));
+    s.$('#calGames').innerHTML = gms.length ? `<h4 class="sec">🏀 Games this month</h4>${gms.map(g => `<button class="row" data-x="day" data-d="${g.date}">
+      <img class="team-logo sm" src="${teamLogo(g)}" alt=""><div class="row-main"><div class="row-name">${vsAt(g)} ${esc(g.opp)}</div>
+      <div class="row-sub">${parseDate(g.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · ${g.result ? esc(g.result) : gameTime(g)}${g.home ? ' · Home' : ' · ' + esc(g.where)}</div></div><span class="chev">›</span></button>`).join('')}` : '';
   }
   const shift = n => { const d = parseDate(month + '-01'); d.setMonth(d.getMonth() + n); month = dateStr(d).slice(0, 7); draw(); };
   s.on('click', '[data-x="prev"]', () => shift(-1));
@@ -1610,7 +1834,7 @@ function summaryData(range) {
   const fmtD = d => parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   const name = (profile()?.name || '').trim().split(/\s+/)[0];
   return {
-    kicker: 'Pulse',
+    kicker: profile()?.number ? `Pulse · #${profile().number}` : 'Pulse',
     title: name ? `${name}'s ${range === 'week' ? 'week' : 'month'}` : range === 'week' ? 'My week' : 'My month',
     rangeLabel: `${fmtD(dates[0])} – ${fmtD(today)}`,
     badge: streak() >= 3 ? `🔥 ${streak()}-day logging streak` : '',
@@ -1618,7 +1842,9 @@ function summaryData(range) {
     n, logged: logged.length, goalCal: g.cal, goalP: g.p,
     onTarget: logged.filter(t => Math.abs(t.cal - g.cal) <= g.cal * 0.1).length,
     avgCal: logged.length ? avg('cal') : null, avgP: avg('p'), avgC: avg('c'), avgF: avg('f'),
-    avgSleep: avgOf('sleepMin'), avgRecovery: avgOf('recovery'), weight,
+    avgSleep: avgOf('sleepMin'), avgRecovery: avgOf('recovery'), weight: profile()?.showWeight ? weight : null,
+    sleepNear: days.filter(d => d.bed && Math.abs(toMin(d.bed) - toMin(bedGoal())) <= 30).length,
+    games: GAMES.filter(x => x.date >= dates[0] && x.date <= today).length,
     gutDays: new Set(db.list('stomach').filter(e => e.date >= dates[0]).map(e => e.date)).size,
     offDays: new Set(db.list('feel').filter(e => e.date >= dates[0]).map(e => e.date)).size,
   };
@@ -1683,7 +1909,9 @@ function showWelcome() {
     <h1>Welcome to Pulse</h1>
     <p class="muted">Nutrition, recovery and digestion in one place.</p>
     <form id="wf" class="card">
-      <div class="field"><label>Your name</label><input name="name" autocomplete="given-name" placeholder="First name" required></div>
+      <div class="grid-name"><div class="field"><label>Your name</label><input name="name" autocomplete="given-name" placeholder="First name" required></div>
+        <div class="field"><label>Jersey #</label><input name="number" inputmode="numeric" maxlength="2" placeholder="opt."></div></div>
+      <label class="check"><input type="checkbox" name="gf"> 🌾 I eat gluten-free (celiac)</label>
       <h4 class="sec">Daily goals <span class="muted">— from your dietitian, or a starting guess</span></h4>
       <div class="grid2">
         <div class="field"><label>Calories</label><input name="cal" inputmode="decimal" value="${DEFAULT_GOALS.cal}"></div>
@@ -1698,7 +1926,7 @@ function showWelcome() {
   $('#wf').onsubmit = e => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    saveProfile({ name: fd.get('name').trim(), goals: { ...DEFAULT_GOALS, cal: num(fd.get('cal')), p: num(fd.get('p')), c: num(fd.get('c')), f: num(fd.get('f')) } });
+    saveProfile({ name: fd.get('name').trim(), number: String(fd.get('number') || '').replace(/[^0-9]/g, '').slice(0, 2), glutenFree: fd.get('gf') === 'on', goals: { ...DEFAULT_GOALS, cal: num(fd.get('cal')), p: num(fd.get('p')), c: num(fd.get('c')), f: num(fd.get('f')) } });
     startApp({ first: true });
   };
 }
@@ -1774,14 +2002,18 @@ function splash(first) {
   const name = (profile()?.name || '').trim().split(/\s+/)[0];
   const t = dateStr(), n = streak(), preps = activePreps().reduce((s, p) => s + p.left, 0);
   const todayCal = sumMacros(dayEntries(t).map(e => e.macros)).cal;
+  const now = timeStr(), num = profile()?.number, gm = gameOn(t);
   const note = first ? 'Tap ＋ to log your first meal'
+    : now === '11:11' ? "✨ It's 11:11. Make a wish"
+    : gm ? `🏀 Game day ${vsAt(gm)} ${esc(gm.opp)} · ${gameTime(gm)}`
+    : n === 11 || n === 111 ? `🍀 ${n} days in a row. Lucky number`
     : n >= 2 ? `🔥 ${n} days logged in a row`
     : preps >= 1 ? `🥡 ${fmt(preps)} meal-prep container${preps === 1 ? '' : 's'} ready`
     : todayCal ? `${fmt(todayCal)} cal logged so far today`
     : 'Ready when you are';
   const el = document.createElement('div');
   el.className = 'splash';
-  el.innerHTML = `<div class="splash-in"><img src="icons/icon-192.png" alt="">
+  el.innerHTML = `<div class="splash-in">${num ? `<div class="splash-num">${esc(num)}</div>` : ''}<img src="icons/icon-192.png" alt="">
     <h1>${first ? 'Welcome' : 'Welcome back'}${name ? `, ${esc(name)}` : ''}</h1>
     <p>${greeting()} · ${parseDate(t).toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
     <div class="splash-note">${note}</div></div>`;

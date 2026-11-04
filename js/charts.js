@@ -58,3 +58,25 @@ export function lineChart({ series, labels, height = 150, fmtY = v => Math.round
   s += xLabels(labels, n, L, bw, H) + '</svg>';
   return s;
 }
+
+// Bars from bedtime to wake time. Values are minutes after noon (so 9 PM = 540).
+export function sleepChart({ nights, labels, goal, fmtT, height = 170 }) {
+  const W = 340, H = height, L = 46, R = 8, T = 10, B = 22, n = nights.length;
+  const all = nights.flatMap(x => x ? [x.bed, x.wake] : []);
+  if (!all.length) return `<div class="chart-empty">Log bed and wake times to see your sleep schedule</div>`;
+  const lo = Math.floor((Math.min(...all, goal) - 30) / 60) * 60, hi = Math.ceil((Math.max(...all) + 30) / 60) * 60;
+  const iw = W - L - R, ih = H - T - B, bw = iw / n, gap = Math.min(bw * 0.3, 5);
+  const y = v => T + ((v - lo) / (hi - lo)) * ih;
+  let s = `<svg class="chart" viewBox="0 0 ${W} ${H}">`;
+  const step = (hi - lo) / 60 > 8 ? 180 : 120;
+  for (let v = lo; v <= hi; v += step) s += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${L - 6}" y="${y(v) + 3.5}" class="ylab" text-anchor="end">${fmtT(v)}</text>`;
+  s += `<rect x="${L}" y="${y(goal - 30)}" width="${iw}" height="${y(goal + 30) - y(goal - 30)}" style="fill:var(--good);opacity:.12"/>`;
+  nights.forEach((x, i) => {
+    if (!x) return;
+    const near = Math.abs(x.bed - goal) <= 30;
+    s += `<rect x="${L + i * bw + gap / 2}" y="${y(x.bed)}" width="${Math.max(bw - gap, 1.5)}" height="${Math.max(y(x.wake) - y(x.bed), 2)}" rx="${Math.min(4, (bw - gap) / 2)}" style="fill:${near ? 'var(--purple-3)' : 'var(--lav-2)'}"/>`;
+  });
+  s += `<line x1="${L}" x2="${W - R}" y1="${y(goal)}" y2="${y(goal)}" class="goal"/>`;
+  s += xLabels(labels, n, L, bw, H) + '</svg>';
+  return s;
+}

@@ -119,7 +119,7 @@ export async function drawSummary(s) {
   // Bottom row: weight, gut, off days
   y += mh + 24;
   const small = [
-    ['⚖️', 'Weight', s.weight || '–'],
+    s.weight != null ? ['⚖️', 'Weight', s.weight || '–'] : ['🌙', 'On-time bedtimes', String(s.sleepNear)],
     ['🫄', 'Stomach days', String(s.gutDays)],
     ['😵‍💫', 'Off days', String(s.offDays)],
   ];

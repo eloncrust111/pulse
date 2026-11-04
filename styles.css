@@ -457,3 +457,75 @@ textarea { resize: vertical; }
 .pill-btn.sm { margin: 0; background: var(--lav-3); color: var(--purple-3); padding: 6px 12px; }
 .img-prev { margin: 14px 0 8px; border-radius: 16px; overflow: hidden; background: var(--lav-3); min-height: 200px; display: grid; place-items: center; }
 .img-prev img { width: 100%; display: block; }
+
+/* games */
+.team-logo { width: 56px; height: 56px; object-fit: contain; flex: none; background: #fff; border-radius: 14px; padding: 6px; }
+.team-logo.sm { width: 36px; height: 36px; border-radius: 10px; padding: 4px; box-shadow: 0 0 0 1px var(--line); }
+.game-banner { display: flex; align-items: center; gap: 14px; margin: 0 16px 12px; padding: 14px 16px; border-radius: 20px; color: #fff;
+  background: linear-gradient(135deg, var(--purple), var(--purple-3)); box-shadow: 0 8px 24px rgba(30, 22, 86, .3); }
+.gb-k { font-size: 12px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; opacity: .8; }
+.gb-t { font-size: 20px; font-weight: 800; }
+.gb-s { font-size: 13px; opacity: .85; }
+.next-game { display: flex; align-items: center; gap: 10px; width: calc(100% - 32px); margin: 0 16px 12px; padding: 8px 12px; border: 0; border-radius: 16px;
+  background: var(--card); color: inherit; font-size: 14px; text-align: left; box-shadow: 0 0 0 1px var(--line); }
+.cal-day { position: relative; }
+.cal-day.game { box-shadow: inset 0 0 0 2px var(--purple-3); }
+.cal-logo { width: 24px; height: 24px; object-fit: contain; background: #fff; border-radius: 6px; padding: 2px; }
+.lg.game { background: transparent; box-shadow: inset 0 0 0 2px var(--purple-3); }
+
+/* training day chips */
+.act-row { display: flex; gap: 8px; margin: 0 16px 12px; }
+.act-chip { flex: 1; border: 1.5px solid var(--line); background: var(--card); color: var(--muted); border-radius: 999px; padding: 8px 4px; font-size: 13px; font-weight: 700; }
+.act-chip.on { border-color: var(--purple-3); background: var(--lav-3); color: var(--purple-3); }
+.ask-card .btn-row { margin-bottom: 0; }
+
+/* sleep */
+.sleep-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sleep-big { font-size: 30px; font-weight: 800; }
+.sleep-times { display: flex; flex-direction: column; gap: 4px; font-weight: 700; font-size: 15px; text-align: right; }
+.sleep-goal { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; padding: 10px 12px; border-radius: 12px; background: var(--lav-3); font-size: 13px; }
+.streak { font-weight: 800; color: var(--warn); }
+.time-in { border: 1.5px solid var(--line); border-radius: 10px; padding: 6px 8px; background: var(--card); color: inherit; font: inherit; }
+
+/* meds */
+.med-when { font-size: 12px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin: 10px 0 2px; }
+.med { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 2px; border: 0; border-top: 1px solid var(--line); background: none; color: inherit; font-size: 15px; text-align: left; }
+.med-group:first-of-type .med:first-of-type { border-top: 0; }
+.med-box { width: 24px; height: 24px; border-radius: 8px; border: 2px solid var(--line); display: grid; place-items: center; font-weight: 900; color: #fff; flex: none; }
+.med.on .med-box { background: var(--good); border-color: var(--good); }
+.med.on .grow { color: var(--muted); text-decoration: line-through; }
+.add-med { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+.add-med input { border: 1.5px solid var(--line); border-radius: 12px; padding: 12px; font: inherit; background: var(--card); color: inherit; }
+
+/* journal */
+.journal-txt { white-space: pre-wrap; margin: 0; font-size: 15px; line-height: 1.45; }
+.journal-in { width: 100%; border: 1.5px solid var(--line); border-radius: 14px; padding: 14px; font: inherit; font-size: 16px; line-height: 1.5; background: var(--card); color: inherit; resize: vertical; }
+
+/* gluten */
+.gf { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 800; vertical-align: 2px; }
+.gf-yes { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+.gf-maybe { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.gf-no { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+.gf-unk { background: var(--lav-3); color: var(--muted); }
+.gf-pick { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
+.gf-pick button { border: 1.5px solid var(--line); background: var(--card); color: var(--muted); border-radius: 12px; padding: 8px 2px; font-size: 18px; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.gf-pick button span { font-size: 11px; font-weight: 700; }
+.gf-pick button.on { border-color: currentColor; }
+.gf-tip.no { background: color-mix(in srgb, var(--bad) 14%, transparent); }
+
+/* settings */
+.switch-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 0; border: 0; border-bottom: 1px solid var(--line); background: none; color: inherit; font-size: 15px; text-align: left; }
+.switch { width: 46px; height: 28px; border-radius: 999px; background: var(--line); position: relative; flex: none; transition: background .2s; }
+.switch i { position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); transition: transform .2s; }
+.switch.on { background: var(--good); }
+.switch.on i { transform: translateX(18px); }
+.num-field { width: 64px; flex: none; margin: 0; }
+.num-field input { text-align: center; font-weight: 800; }
+.avatar.jersey { font-weight: 900; letter-spacing: -.02em; }
+.grid-name { display: grid; grid-template-columns: 1fr 76px; gap: 10px; }
+
+/* splash jersey number */
+.splash-in { position: relative; }
+.splash-num { position: absolute; left: 50%; top: -70px; transform: translateX(-50%); font-size: 200px; font-weight: 900; line-height: 1;
+  color: rgba(255, 255, 255, .07); letter-spacing: -.04em; pointer-events: none; animation: rise .8s ease both; }
+.cal-day.future.game { opacity: 1; }
