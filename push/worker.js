@@ -37,7 +37,11 @@ export default {
   async scheduled(event, env, ctx) {
     const now = new Date(event.scheduledTime);
     ctx.waitUntil(tick(env, now));
-    if (now.getUTCMinutes() % 10 === 0) ctx.waitUntil(checkResults(env, now));
+    // Every minute while a game might be on (so the congrats lands right after
+    // the final is posted), otherwise every 30 minutes to keep the schedule fresh.
+    ctx.waitUntil((async () => {
+      if (now.getUTCMinutes() % 30 === 0 || gameLive(JSON.parse(await env.SUBS.get('games') || '{}'), now)) await checkResults(env, now);
+    })());
   },
 };
 
@@ -104,28 +108,36 @@ async function sendPush(env, endpoint, ttl) {
 // everyone a push; the phone fetches /results and shows the congrats.
 const FEED_HEADERS = { 'User-Agent': 'Mozilla/5.0 (compatible; pulse-push)', Accept: 'application/json' };
 const FEED = 'https://portlandpilots.com/services/responsive-calendar.ashx?type=events&sport=9&location=all&date=';
-export function parseResults(days) {
+export function parseResults(days, starts = {}) {
   const out = {};
   for (const day of days || []) for (const e of day?.events || []) {
-    const r = e.result;
-    if (e.sport?.shortname !== 'wbball' || !r || !/^[WLT]$/.test(r.status || '')) continue;
-    out[String(e.date).slice(0, 10)] = { r: r.status, us: +r.team_score, them: +r.opponent_score, opp: e.opponent?.title || '', at: e.at_vs || 'vs', start: e.date };
+    if (e.sport?.shortname !== 'wbball') continue;
+    const r = e.result, date = String(e.date).slice(0, 10);
+    if (!r || !/^[WLT]$/.test(r.status || '')) { starts[date] = e.date; continue; }
+    out[date] = { r: r.status, us: +r.team_score, them: +r.opponent_score, opp: e.opponent?.title || '', at: e.at_vs || 'vs', start: e.date };
   }
   return out;
 }
+// Posted times can be in the venue's time zone, so the window is wide:
+// from 3 hours before the listed time to 6 hours after.
+const startMs = s => new Date(s + '-08:00').getTime();
+export const gameLive = (starts, now) => Object.values(starts).some(s => now - startMs(s) > -3 * 3600e3 && now - startMs(s) < 6 * 3600e3);
 export async function checkResults(env, now = new Date(), send = sendPush, get = url => fetch(url, { headers: FEED_HEADERS }).then(r => r.json())) {
   // The feed lists a week starting at the date given, so start from yesterday
   // to catch a game that ended last night.
   const [y, m, d] = new Date(new Date(localNow('America/Los_Angeles', now).date + 'T12:00:00Z') - 864e5).toISOString().slice(0, 10).split('-');
   let found;
-  try { found = parseResults(await get(FEED + `${+m}/${+d}/${y}`)); } catch { return; }
+  const starts = {};
+  try { found = parseResults(await get(FEED + `${+m}/${+d}/${y}`), starts); } catch { return; }
+  const before = await env.SUBS.get('games') || '{}';
+  if (JSON.stringify(starts) !== before) await env.SUBS.put('games', JSON.stringify(starts));
   const saved = JSON.parse(await env.SUBS.get('results') || '{}');
   const fresh = Object.keys(found).filter(k => !saved[k]);
   if (!fresh.length) return;
   fresh.forEach(k => { saved[k] = found[k]; });
   await env.SUBS.put('results', JSON.stringify(saved));
   // Only cheer for games that just ended, not ones found late.
-  const wins = fresh.filter(k => found[k].r === 'W' && now - new Date(found[k].start + '-08:00') < 12 * 3600e3);
+  const wins = fresh.filter(k => found[k].r === 'W' && now - startMs(found[k].start) < 12 * 3600e3);
   if (!wins.length) return;
   for (const s of await loadSubs(env)) if (s.wins !== false) await send(env, s.endpoint, 3 * 3600);
 }

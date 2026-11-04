@@ -349,6 +349,13 @@ async function refreshResults() {
     if (JSON.stringify(GAMES.map(g => g.result)) !== before) queueRender();
   } catch {}
 }
+// While a game is on and the app is open, look for the final every minute.
+setInterval(() => {
+  if (document.visibilityState !== 'visible') return;
+  const t = dateStr(), g = [gameOn(t), gameOn(addDays(t, -1))].find(x => x && !x.result);
+  const since = g ? Date.now() - toTs(g.date, g.time || '12:00') : null;
+  if (since != null && since > -3 * 3600e3 && since < 6 * 3600e3) refreshResults();
+}, 60e3);
 const winSeen = () => { try { return JSON.parse(localStorage.getItem('pulseWinSeen') || '[]'); } catch { return []; } };
 // A win on this day or the day before, until she closes it.
 function recentWin(date) {
