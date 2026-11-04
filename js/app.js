@@ -597,7 +597,6 @@ function cycleTrends() {
 // ---------- notifications ----------
 // A short list on purpose: at most a few a day, nothing after bedtime.
 const NOTIFS = [
-  ['n_wish', '✨ 11:11', 'Make a wish at 11:11 AM. Disappears after a minute.', true],
   ['n_bed', '🌙 Bedtime', '30 minutes before your bedtime goal.', true],
   ['n_game', '🏀 Game days', 'The morning of each game, with who you play and when.', true],
   ['n_prep', '🥡 Meal prep', "Once, when you're down to your last container.", true],
@@ -609,7 +608,8 @@ const medsTime = () => profile()?.medsTime || '09:00';
 const nOn = k => profile()?.[k] ?? NOTIFS.find(n => n[0] === k)[3];
 function notifyItems() {
   const t = dateStr(), items = [];
-  if (nOn('n_wish')) items.push({ id: 'wish', at: '11:11', ttl: 60, close: 60, title: '11:11', body: 'Make a wish ✨' });
+  // Easter egg: no setting for this one.
+  items.push({ id: 'wish', at: '11:11', ttl: 60, close: 60, title: '11:11', body: 'Make a wish ✨' });
   if (nOn('n_bed')) items.push({ id: 'bed', at: fromMin(toMin(bedGoal()) - 30), ttl: 1800, title: '🌙 Bedtime in 30 min', body: `Time to start winding down for ${fmtTime(bedGoal())}.` });
   if (nOn('n_game')) GAMES.filter(g => g.date >= t).slice(0, 10).forEach(g =>
     items.push({ id: 'game-' + g.date, date: g.date, at: g.time && g.time < '12:00' ? hmMinus(g.time, 180) : '09:00', ttl: 10800, title: '🏀 Game day', body: `${vsAt(g)} ${g.opp} · ${gameTime(g)}` }));
@@ -664,7 +664,7 @@ function medsTimeRow() {
 }
 // If the app is open at 11:11 AM, a small note shows for that minute only.
 function wishCheck() {
-  const el = $('.wish-bar'), show = timeStr() === '11:11' && nOn('n_wish') && ui.wishGone !== dateStr();
+  const el = $('.wish-bar'), show = timeStr() === '11:11' && ui.wishGone !== dateStr();
   if (show && !el) {
     const b = document.createElement('button');
     b.className = 'wish-bar'; b.textContent = '✨ 11:11. Make a wish';

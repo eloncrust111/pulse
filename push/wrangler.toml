@@ -5,10 +5,10 @@ compatibility_date = "2026-10-01"
 [vars]
 VAPID_PUBLIC = "BD1F8uEPkCZZmoIEgO9d4d96GM3RevriZRex5W7nYDD9mAv4hzX8SO-NtcmPfp7k3VAfRmr0VPnOmr55lSUdpAQ"
 
-# Filled in by: npx wrangler kv namespace create SUBS
+# Created with: wrangler kv namespace create SUBS
 [[kv_namespaces]]
 binding = "SUBS"
-id = "PASTE_KV_ID_HERE"
+id = "3233d9afcb3a4018ab63b66dc6f1e11c"
 
 [triggers]
 crons = ["* * * * *"]
