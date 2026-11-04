@@ -30,7 +30,9 @@ const GF = {
   no: { b: '🚫', t: 'Contains gluten', cls: 'gf-no' },
   '': { b: '❔', t: 'Not checked', cls: 'gf-unk' },
 };
-const ACTIVITIES = [['practice', '🏀', 'Practice'], ['lift', '🏋️', 'Lift'], ['rest', '😌', 'Rest day']];
+const ACTIVITIES = [['practice', '🏀', 'Practice'], ['shoot', '🎯', 'Shoot-around'], ['weights', '🏋️', 'Weights', 'with the team'], ['workout', '💪', 'Workout', 'on your own'], ['rest', '😌', 'Rest day']];
+// Older logs said 'lift' for team weights.
+const actsOf = day => (day?.activity || []).map(a => a === 'lift' ? 'weights' : a);
 const MED_TIMES = ['Morning', 'With food', 'Night', 'Anytime'];
 const WHERE = ['Upper stomach', 'Lower stomach', 'All over'];
 const DURATION = ['Under 30 min', '1–2 hours', 'Several hours', 'All day'];
@@ -344,14 +346,19 @@ function gameBanner(date) {
     <span class="grow">Next game <b>${days === 1 ? 'tomorrow' : parseDate(n.date).toLocaleDateString(undefined, { weekday: 'long' })}</b> ${vsAt(n)} ${esc(n.opp)}</span><span class="muted">${gameTime(n)}</span></button>`;
 }
 function activityRow(date, day) {
-  const on = new Set(day.activity || []);
-  return `<div class="act-row">${ACTIVITIES.map(([k, e, l]) => `<button class="act-chip ${on.has(k) ? 'on' : ''}" data-act="activity" data-k="${k}">${e} ${l}</button>`).join('')}</div>`;
+  const on = new Set(actsOf(day)), today = date === dateStr();
+  return `<section class="card train-card">
+    <div class="card-head"><h3>${today ? "Today's training" : 'Training'}</h3><span class="muted small">${on.size ? '' : today ? 'Check what you do today' : 'Nothing checked'}</span></div>
+    <div class="train-grid">${ACTIVITIES.map(([k, e, l, sub]) => `<button class="train ${on.has(k) ? 'on' : ''} ${k === 'rest' ? 'rest' : ''}" data-act="activity" data-k="${k}" aria-pressed="${on.has(k)}">
+      <span class="tick">${on.has(k) ? '✓' : ''}</span><span class="train-e">${e}</span><span class="train-l">${l}${sub ? `<small>${sub}</small>` : ''}</span></button>`).join('')}</div>
+  </section>`;
 }
 function toggleActivity(k) {
   const d = { ...(db.get('days', ui.date) || { id: ui.date, date: ui.date }) };
-  const on = new Set(d.activity || []);
+  const on = new Set(actsOf(d));
   if (on.has(k)) on.delete(k);
-  else { on.add(k); if (k === 'rest') { on.delete('practice'); on.delete('lift'); } else on.delete('rest'); }
+  else if (k === 'rest') on.clear(), on.add('rest');
+  else { on.add(k); on.delete('rest'); }
   d.activity = [...on];
   db.put('days', d);
 }
@@ -368,30 +375,100 @@ function gfPrompt() {
 // Bedtimes as minutes after noon, so 9 PM and 1 AM sort and average sensibly.
 const toMin = t => { const [h, m] = t.split(':').map(Number); return ((h + 12) % 24) * 60 + m; };
 const fromMin = x => { x = ((Math.round(x) % 1440) + 1440) % 1440; const h = (Math.floor(x / 60) + 12) % 24; return `${String(h).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
-const bedGoal = () => profile()?.bedGoal || '21:00';
+// Bedtime isn't one fixed time. It works back from when she has to be up the
+// next morning, so a late class, a weekend or a game night moves it.
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const sleepGoal = () => profile()?.sleepGoal || 540;
+const wakeUsual = dow => profile()?.wakeByDay?.[dow] || (dow === 0 || dow === 6 ? '07:00' : '06:00');
+// Wake time on the morning of `date`.
+const wakeOn = date => db.get('days', date)?.planWake || wakeUsual(parseDate(date).getDay());
+// Plan for the night that starts on `date`.
+function bedPlan(date) {
+  const wake = wakeOn(addDays(date, 1));
+  let bed = toMin(wake) - sleepGoal() + (toMin(wake) < 360 ? 1440 : 0), why = '';
+  const g = gameOn(date);
+  if (g?.time && g.time >= '15:00') { const after = toMin(g.time) + 210; if (after > bed) { bed = after; why = 'game'; } }
+  const set = db.get('days', date)?.planBed;
+  if (set) { bed = toMin(set); why = 'set'; }
+  return { bed: fromMin(bed), wake, why, sleep: toMin(wake) + (toMin(wake) < 360 ? 1440 : 0) - bed };
+}
+const bedGoal = (date = dateStr()) => bedPlan(date).bed;
+// A logged bedtime on day D's record is the night before D.
+const nearPlan = x => Math.abs(toMin(x.bed) - toMin(bedGoal(addDays(x.date || x.id, -1)))) <= 30;
 // Nights she forgot to log are skipped, not counted as misses (up to 3 in a row).
 function sleepStreak() {
   let d = dateStr(), n = 0, gap = 0;
   while (gap <= 3) {
     const b = db.get('days', d)?.bed;
     if (!b) { gap++; d = addDays(d, -1); continue; }
-    if (Math.abs(toMin(b) - toMin(bedGoal())) > 30) break;
+    if (!nearPlan({ bed: b, date: d })) break;
     n++; gap = 0; d = addDays(d, -1);
   }
   return n;
 }
 function sleepCard(date, day) {
   const last7 = Array.from({ length: 7 }, (_, i) => db.get('days', addDays(date, -i))).filter(x => x?.bed);
-  const near = last7.filter(x => Math.abs(toMin(x.bed) - toMin(bedGoal())) <= 30).length;
+  const near = last7.filter(nearPlan).length, plan = date >= dateStr() ? bedPlan(date) : null;
   const st = date === dateStr() ? sleepStreak() : 0;
   return `<section class="card sleep-card tap" data-act="body">
     <div class="card-head"><h3>🌙 Sleep</h3><span class="link">${day.sleepMin != null || day.bed ? 'Edit' : 'Log'}</span></div>
     ${day.sleepMin != null || day.bed ? `<div class="sleep-main">
         <div><div class="sleep-big">${day.sleepMin != null ? fmtSleep(day.sleepMin) : '–'}</div><div class="muted small">${day.sleepPerf != null ? `${day.sleepPerf}% sleep performance` : 'last night'}</div></div>
         ${day.bed ? `<div class="sleep-times"><span>🛏️ ${fmtTime(day.bed)}</span><span>☀️ ${day.wake ? fmtTime(day.wake) : '–'}</span></div>` : ''}
-      </div>` : `<p class="muted small">Log when you went to bed and woke up. Pulse tracks how close you stay to your ${fmtTime(bedGoal())} bedtime.</p>`}
-    ${last7.length ? `<div class="sleep-goal"><span>🎯 Near your ${fmtTime(bedGoal())} bedtime <b>${near} of the last ${last7.length} nights</b></span>${st >= 2 ? `<span class="streak">🔥 ${st} in a row</span>` : ''}</div>` : ''}
+      </div>` : `<p class="muted small">Log when you went to bed and woke up. Pulse tracks how close you stay to your planned bedtime.</p>`}
+    ${plan ? tonightRow(date, plan) : ''}
+    ${last7.length ? `<div class="sleep-goal"><span>🎯 Near your planned bedtime <b>${near} of the last ${last7.length} nights</b></span>${st >= 2 ? `<span class="streak">🔥 ${st} in a row</span>` : ''}</div>` : ''}
   </section>`;
+}
+
+function tonightRow(date, p) {
+  const short = p.sleep < sleepGoal() - 15;
+  return `<button class="tonight" data-act="sleepPlan" data-d="${date}">
+    <span class="grow">${date === dateStr() ? 'Tonight' : fmtDay(date)}: bed by <b>${fmtTime(p.bed)}</b> · up at ${fmtTime(p.wake)}
+    <div class="muted tiny">${p.why === 'game' ? `🏀 Game night, so a bit later. ` : ''}${short ? `${fmtSleep(p.sleep)} of sleep, under your ${fmtSleep(sleepGoal())} goal` : `${fmtSleep(p.sleep)} of sleep`}</div></span>
+    <span class="link">Change</span></button>`;
+}
+function openSleepPlan(date) {
+  const tom = addDays(date, 1), dd = { ...(db.get('days', date) || { id: date, date }) }, td = { ...(db.get('days', tom) || { id: tom, date: tom }) };
+  const s = openSheet({
+    title: date === dateStr() ? 'Tonight' : fmtDay(date) + ' night',
+    body: `<div class="grid2">
+        <div class="field"><label>Wake up ${parseDate(tom).toLocaleDateString(undefined, { weekday: 'long' })}</label><input type="time" id="pw" value="${wakeOn(tom)}"></div>
+        <div class="field"><label>Bed by</label><input type="time" id="pb" value="${bedGoal(date)}"></div></div>
+      <p class="muted small" id="pinfo"></p>
+      <p class="muted tiny">Pulse works back from your wake-up time to get you ${fmtSleep(sleepGoal())} (change that in Me). Late class, weekend, something came up? Change either one. It only affects this night.</p>
+      ${dd.planBed || td.planWake ? `<button class="btn ghost full" data-x="reset">Back to usual</button>` : ''}`,
+    footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  let bedTouched = !!dd.planBed;
+  const info = () => {
+    const w = toMin(s.$('#pw').value || wakeOn(tom)), b = toMin(s.$('#pb').value || bedGoal(date));
+    s.$('#pinfo').textContent = `That's ${fmtSleep(w + (w < 360 ? 1440 : 0) - b)} of sleep.`;
+  };
+  s.on('input', '#pw', () => { if (!bedTouched) { const w = toMin(s.$('#pw').value); s.$('#pb').value = fromMin(w + (w < 360 ? 1440 : 0) - sleepGoal()); } info(); });
+  s.on('input', '#pb', () => { bedTouched = true; info(); });
+  s.on('click', '[data-x="reset"]', () => { delete dd.planBed; delete td.planWake; db.put('days', dd); db.put('days', td); s.close(); toast('Back to your usual'); });
+  s.on('click', '[data-x="save"]', () => {
+    const w = s.$('#pw').value, b = s.$('#pb').value;
+    if (w && w !== wakeUsual(parseDate(tom).getDay())) td.planWake = w; else delete td.planWake;
+    db.put('days', td);
+    if (bedTouched && b && b !== bedPlan(date).bed) dd.planBed = b; else if (!bedTouched) delete dd.planBed;
+    db.put('days', dd);
+    s.close(); toast(`🌙 Bed by ${fmtTime(bedGoal(date))}`);
+  });
+  info();
+}
+function openWakeTimes() {
+  const s = openSheet({
+    title: 'Usual wake-up times',
+    body: `<p class="muted small">Your bedtime each night works back from these. Change a single night from the Sleep card.</p>
+      ${[1, 2, 3, 4, 5, 6, 0].map(i => `<div class="kv-row"><span>${WEEKDAYS[i]}</span><input type="time" class="time-in" data-w="${i}" value="${wakeUsual(i)}"></div>`).join('')}`,
+    footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  s.on('click', '[data-x="save"]', () => {
+    const w = {}; s.$$('[data-w]').forEach(i => { if (i.value) w[i.dataset.w] = i.value; });
+    saveProfile({ wakeByDay: w }); s.close(); toast('Saved');
+  });
 }
 
 // ---------- Apple Health (through an iPhone Shortcut) ----------
@@ -597,7 +674,7 @@ function cycleTrends() {
 // ---------- notifications ----------
 // A short list on purpose: at most a few a day, nothing after bedtime.
 const NOTIFS = [
-  ['n_bed', '🌙 Bedtime', '30 minutes before your bedtime goal.', true],
+  ['n_bed', '🌙 Bedtime', "30 minutes before that night's planned bedtime.", true],
   ['n_game', '🏀 Game days', 'The morning of each game, with who you play and when.', true],
   ['n_prep', '🥡 Meal prep', "Once, when you're down to your last container.", true],
   ['n_meds', '💊 Meds reminder', "Only if you haven't checked them off by the time you pick below.", true],
@@ -610,7 +687,10 @@ function notifyItems() {
   const t = dateStr(), items = [];
   // Easter egg: no setting for this one.
   items.push({ id: 'wish', at: '11:11', ttl: 60, close: 60, title: '11:11', body: 'Make a wish ✨' });
-  if (nOn('n_bed')) items.push({ id: 'bed', at: fromMin(toMin(bedGoal()) - 30), ttl: 1800, title: '🌙 Bedtime in 30 min', body: `Time to start winding down for ${fmtTime(bedGoal())}.` });
+  if (nOn('n_bed')) for (let i = 0; i < 8; i++) {
+    const d = addDays(t, i), b = bedGoal(d), at = fromMin(toMin(b) - 30);
+    if (i > 0 || at > timeStr()) items.push({ id: 'bed-' + d, date: d, at, ttl: 1800, title: '🌙 Bedtime in 30 min', body: `Bed by ${fmtTime(b)} to get your sleep in.` });
+  }
   if (nOn('n_game')) GAMES.filter(g => g.date >= t).slice(0, 10).forEach(g =>
     items.push({ id: 'game-' + g.date, date: g.date, at: g.time && g.time < '12:00' ? hmMinus(g.time, 180) : '09:00', ttl: 10800, title: '🏀 Game day', body: `${vsAt(g)} ${g.opp} · ${gameTime(g)}` }));
   const meds = medList();
@@ -632,7 +712,7 @@ function notifyItems() {
   if (nOn('n_period') && periodOn()) {
     const c = cycleInfo();
     const eve = c.next && addDays(c.next, -1);
-    if (eve && eve >= t) items.push({ id: 'period', date: eve, at: fromMin(toMin(bedGoal()) - 120), ttl: 7200, title: 'Heads-up', body: '🌸 Might start tomorrow.' });
+    if (eve && eve >= t) items.push({ id: 'period', date: eve, at: fromMin(toMin(bedGoal(eve)) - 120), ttl: 7200, title: 'Heads-up', body: '🌸 Might start tomorrow.' });
   }
   return items;
 }
@@ -974,8 +1054,8 @@ function screenTrends() {
     </section>
 
     <section class="card">
-      <div class="card-head"><h3>🌙 Sleep schedule</h3><span class="muted small">${(() => { const b = days.filter(d => d.bed); return b.length ? `${b.filter(d => Math.abs(toMin(d.bed) - toMin(bedGoal())) <= 30).length}/${b.length} near ${fmtTime(bedGoal())}` : ''; })()}</span></div>
-      ${sleepChart({ nights: days.map(d => d.bed && d.wake ? { bed: toMin(d.bed), wake: toMin(d.wake) < toMin(d.bed) ? toMin(d.wake) + 1440 : toMin(d.wake) } : null), labels, goal: toMin(bedGoal()), fmtT: v => fmtTime(fromMin(v)).replace(':00', '') })}
+      <div class="card-head"><h3>🌙 Sleep schedule</h3><span class="muted small">${(() => { const b = days.filter(d => d.bed); return b.length ? `${b.filter(nearPlan).length}/${b.length} near plan` : ''; })()}</span></div>
+      ${sleepChart({ nights: days.map(d => d.bed && d.wake ? { bed: toMin(d.bed), wake: toMin(d.wake) < toMin(d.bed) ? toMin(d.wake) + 1440 : toMin(d.wake), goal: toMin(bedGoal(addDays(d.id, -1))) } : null), labels, goal: toMin(bedGoal(addDays(dateStr(), -1))), fmtT: v => fmtTime(fromMin(v)).replace(':00', '') })}
       <p class="muted tiny center">Each bar runs from bedtime (top) to wake-up. The green band is within 30 min of your bedtime goal.</p>
     </section>
 
@@ -1144,7 +1224,8 @@ function screenMe() {
       ${OWNER?.glutenFree ? '' : switchRow('glutenFree', '🌾 I eat gluten-free', 'Flags foods and recipes that contain or may contain gluten.')}
       ${switchRow('showWeight', '⚖️ Show body weight', 'Off by default. Turns on the weight tracker in Trends and on your recovery card.')}
       ${switchRow('showPeriod', '🌸 Period tracking', 'A small row at the bottom of Today. It never shows up on summary images.', true)}
-      <div class="kv-row"><span>🌙 Bedtime goal<div class="muted tiny">Sleep card tracks how close you stay to it</div></span><input type="time" class="time-in" value="${bedGoal()}" data-change="bedGoal" aria-label="Bedtime goal"></div>
+      <div class="kv-row"><span>🌙 Sleep goal<div class="muted tiny">Bedtime each night works back from this</div></span><select class="time-in" data-change="sleepGoal" aria-label="Sleep goal">${[420, 450, 480, 510, 540, 570, 600].map(m => `<option value="${m}" ${m === sleepGoal() ? 'selected' : ''}>${fmtSleep(m)}</option>`).join('')}</select></div>
+      <button class="btn soft full mt" data-act="wakeTimes">⏰ Usual wake-up times</button>
       <button class="btn soft full mt" data-act="editMeds">💊 Edit meds & vitamins</button>
     </section>
 
@@ -1217,6 +1298,8 @@ const acts = {
   backup: () => exportBackup(),
   shareImg: () => openShareImage(),
   activity: d => toggleActivity(d.k),
+  sleepPlan: d => openSleepPlan(d.d),
+  wakeTimes: () => openWakeTimes(),
   gfSet: d => { saveProfile({ glutenFree: d.v === '1' }); if (d.v === '1') toast('Gluten warnings on'); },
   med: d => toggleMed(d.id),
   editMeds: () => openMeds(),
@@ -1239,7 +1322,7 @@ const changes = {
   pickDate: el => { if (el.value) { ui.date = el.value; render(); } },
   goal: el => { const g = goals(); g[el.dataset.k] = num(el.value); saveProfile({ goals: g }); },
   name: el => saveProfile({ name: el.value.trim() }),
-  bedGoal: el => { if (el.value) saveProfile({ bedGoal: el.value }); },
+  sleepGoal: el => saveProfile({ sleepGoal: +el.value }),
   medsTime: el => { if (el.value) saveProfile({ medsTime: el.value }); },
   restore: el => restoreBackup(el.files[0]),
 };
@@ -2004,7 +2087,7 @@ function openCalendar() {
     body: `<div class="cal-nav"><button class="icon-btn" data-x="prev" aria-label="Previous month">‹</button><b id="calTitle"></b><button class="icon-btn" data-x="next" aria-label="Next month">›</button></div>
       <div class="cal-grid cal-wd">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(d => `<span>${d}</span>`).join('')}</div>
       <div class="cal-grid" id="calGrid"></div>
-      <div class="cal-legend"><span><i class="lg on"></i>On target</span><span><i class="lg under"></i>Under</span><span><i class="lg over"></i>Over</span><span><i class="mk gut"></i>Stomach</span><span><i class="mk feel"></i>Felt off</span><span><i class="mk sleep"></i>Recovery logged</span>${periodOn() ? '<span><i class="mk period"></i>Period</span>' : ''}<span>🏀 Practice</span><span>🏋️ Lift</span><span><i class="lg game"></i>Game</span></div>
+      <div class="cal-legend"><span><i class="lg on"></i>On target</span><span><i class="lg under"></i>Under</span><span><i class="lg over"></i>Over</span><span><i class="mk gut"></i>Stomach</span><span><i class="mk feel"></i>Felt off</span><span><i class="mk sleep"></i>Recovery logged</span>${periodOn() ? '<span><i class="mk period"></i>Period</span>' : ''}<span>🏀 Practice</span><span>🎯 Shoot-around</span><span>🏋️ Weights</span><span>💪 Workout</span><span><i class="lg game"></i>Game</span></div>
       <div id="calSum"></div>
       <div id="calGames"></div>`,
   });
@@ -2026,9 +2109,9 @@ function openCalendar() {
       if (t) logged.push(t);
       const r = t ? t.cal / (g.cal || 1) : 0;
       const cls = !t ? '' : r < 0.9 ? 'under' : r > 1.1 ? 'over' : 'on';
-      const gm = gameOn(ds), acts = day?.activity || [];
+      const gm = gameOn(ds), acts = actsOf(day);
       cells += `<button class="cal-day ${cls} ${ds === today ? 'today' : ''} ${ds === ui.date ? 'sel' : ''} ${ds > today ? 'future' : ''} ${gm ? 'game' : ''}" data-x="day" data-d="${ds}">
-        <span class="cal-n">${d}</span>${gm ? `<img class="cal-logo" src="${teamLogo(gm)}" alt="${esc(gm.opp)}">` : ''}<span class="cal-c">${t ? (t.cal >= 1000 ? (t.cal / 1000).toFixed(1) + 'k' : Math.round(t.cal)) : gm ? '' : acts.includes('lift') ? '🏋️' : acts.includes('practice') ? '🏀' : ''}</span>
+        <span class="cal-n">${d}</span>${gm ? `<img class="cal-logo" src="${teamLogo(gm)}" alt="${esc(gm.opp)}">` : ''}<span class="cal-c">${t ? (t.cal >= 1000 ? (t.cal / 1000).toFixed(1) + 'k' : Math.round(t.cal)) : gm ? '' : acts.includes('practice') ? '🏀' : acts.includes('weights') ? '🏋️' : acts.includes('workout') ? '💪' : acts.includes('shoot') ? '🎯' : ''}</span>
         <span class="cal-mk">${eps[ds] ? '<i class="mk gut"></i>' : ''}${offs.has(ds) ? '<i class="mk feel"></i>' : ''}${day && (day.sleepMin != null || day.recovery != null) ? '<i class="mk sleep"></i>' : ''}${day?.period && periodOn() ? '<i class="mk period"></i>' : ''}</span></button>`;
     }
     s.$('#calGrid').innerHTML = cells;
@@ -2101,7 +2184,7 @@ function summaryData(range) {
     onTarget: logged.filter(t => Math.abs(t.cal - g.cal) <= g.cal * 0.1).length,
     avgCal: logged.length ? avg('cal') : null, avgP: avg('p'), avgC: avg('c'), avgF: avg('f'),
     avgSleep: avgOf('sleepMin'), avgRecovery: avgOf('recovery'), weight: profile()?.showWeight ? weight : null,
-    sleepNear: days.filter(d => d.bed && Math.abs(toMin(d.bed) - toMin(bedGoal())) <= 30).length,
+    sleepNear: days.filter(d => d.bed && nearPlan(d)).length,
     games: GAMES.filter(x => x.date >= dates[0] && x.date <= today).length,
     gutDays: new Set(db.list('stomach').filter(e => e.date >= dates[0]).map(e => e.date)).size,
     offDays: new Set(db.list('feel').filter(e => e.date >= dates[0]).map(e => e.date)).size,

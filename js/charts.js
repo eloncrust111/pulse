@@ -73,7 +73,7 @@ export function sleepChart({ nights, labels, goal, fmtT, height = 170 }) {
   s += `<rect x="${L}" y="${y(goal - 30)}" width="${iw}" height="${y(goal + 30) - y(goal - 30)}" style="fill:var(--good);opacity:.12"/>`;
   nights.forEach((x, i) => {
     if (!x) return;
-    const near = Math.abs(x.bed - goal) <= 30;
+    const near = Math.abs(x.bed - (x.goal ?? goal)) <= 30;
     s += `<rect x="${L + i * bw + gap / 2}" y="${y(x.bed)}" width="${Math.max(bw - gap, 1.5)}" height="${Math.max(y(x.wake) - y(x.bed), 2)}" rx="${Math.min(4, (bw - gap) / 2)}" style="fill:${near ? 'var(--purple-3)' : 'var(--lav-2)'}"/>`;
   });
   s += `<line x1="${L}" x2="${W - R}" y1="${y(goal)}" y2="${y(goal)}" class="goal"/>`;

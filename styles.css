@@ -553,3 +553,16 @@ textarea { resize: vertical; }
 @keyframes wishIn { from { opacity: 0; transform: translate(-50%, -8px); } }
 
 .demo-tag { position: fixed; top: calc(env(safe-area-inset-top) + 6px); right: 10px; z-index: 55; padding: 4px 10px; border-radius: 999px; background: var(--warn); color: #fff; font-size: 12px; font-weight: 700; pointer-events: none; }
+
+/* training checklist */
+.train-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.train { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1.5px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text); font: inherit; text-align: left; }
+.train.rest { grid-column: 1 / -1; }
+.train .tick { flex: none; width: 22px; height: 22px; border-radius: 7px; border: 2px solid var(--line); display: grid; place-items: center; font-size: 14px; font-weight: 800; color: #fff; }
+.train-e { font-size: 18px; }
+.train-l { font-weight: 700; font-size: 14px; line-height: 1.2; }
+.train-l small { display: block; color: var(--muted); font-weight: 500; font-size: 11px; }
+.train.on { border-color: var(--purple-3); background: var(--lav-3); }
+.train.on .tick { background: var(--purple-3); border-color: var(--purple-3); }
+/* tonight's bedtime plan */
+.tonight { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 10px; padding: 10px 12px; border: 0; border-radius: 12px; background: var(--lav-3); color: var(--text); font: inherit; font-size: 14px; text-align: left; }

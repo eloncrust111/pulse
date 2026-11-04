@@ -115,7 +115,7 @@ export async function seedDemo() {
     if (rnd() > 0.15) Object.assign(day, { recovery, hrv: Math.round(between(68, 98)), rhr: Math.round(between(49, 56)) });
     if (!isToday && rnd() > 0.15) Object.assign(day, { strain: Math.round(between(game ? 15 : rest ? 5 : 10, game ? 19 : rest ? 9 : 16) * 10) / 10, burned: Math.round(between(rest ? 2200 : 2700, rest ? 2500 : 3300)), steps: Math.round(between(7000, 15000)) });
     day.water = isToday ? 48 : Math.round(between(64, 112) / 8) * 8;
-    day.activity = rest ? ['rest'] : game ? [] : dow === 1 || dow === 3 ? ['practice', 'lift'] : ['practice'];
+    day.activity = rest ? ['rest'] : game ? ['shoot'] : dow === 1 || dow === 3 ? ['practice', 'weights'] : dow === 6 ? ['workout'] : rnd() < 0.3 ? ['practice', 'shoot'] : ['practice'];
     if (isToday) day.activity = ['practice'];
     const taken = {};
     meds.forEach(m => { if (rnd() < (isToday ? (m.when === 'Night' ? 0 : 1) : 0.88)) taken[m.id] = m.when === 'Night' ? '20:40' : '06:30'; });
@@ -145,7 +145,7 @@ export async function seedDemo() {
   ];
   feel.forEach(([o, time, level, feelings, context]) => db.put('feel', { id: id('o'), date: addDays(today, o), time, level, feelings, context, notes: '' }));
 
-  db.put('settings', { id: 'profile', name: 'Carly', number: '11', glutenFree: true, showWeight: false, bedGoal: '21:00', meds,
+  db.put('settings', { id: 'profile', name: 'Carly', number: '11', glutenFree: true, showWeight: false, sleepGoal: 540, meds,
     goals: { cal: 2600, p: 135, c: 320, f: 80, fiber: 30, water: 100 }, theme: 'system', healthReady: true });
   return { entries: entries.length, days: 43 };
 }
