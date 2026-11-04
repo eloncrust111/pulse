@@ -57,6 +57,8 @@ const DEFAULT_GOALS = { cal: 2400, p: 140, c: 300, f: 75, fiber: 30, water: 100 
 const OWNER = { name: 'Carly', number: '11', glutenFree: true };
 // ?demo opens a separate copy filled with sample data (see demo.js).
 const DEMO = new URLSearchParams(location.search).has('demo');
+// ?new is a throwaway copy that starts at first-time setup every time it opens.
+const NEW = !DEMO && new URLSearchParams(location.search).has('new');
 
 const profile = () => db.get('settings', 'profile');
 const goals = () => ({ ...DEFAULT_GOALS, ...(profile()?.goals || {}) });
@@ -754,6 +756,7 @@ function openMeds() {
   s.on('click', '[data-x="rm"]', el => { meds.splice(+el.dataset.n, 1); draw(); });
   s.on('click', '[data-x="save"]', () => { saveProfile({ meds }); s.close(); toast('Saved'); });
   draw();
+  return s;
 }
 
 // ---------- period ----------
@@ -892,12 +895,12 @@ function notifyItems() {
 }
 let notifyTimer;
 function scheduleNotify(ms = 1500) {
-  if (DEMO) return;
+  if (DEMO || NEW) return;
   clearTimeout(notifyTimer);
   notifyTimer = setTimeout(() => notify.saveSchedule(notifyItems(), { wins: nOn('n_win') }).catch(() => {}), ms);
 }
 async function turnOnNotify() {
-  if (DEMO) return toast("This is the sample version. Notifications are off here.");
+  if (DEMO || NEW) return toast("This is a test version. Notifications are off here.");
   try { await notify.turnOn(); ui.notifyOn = true; toast('🔔 Notifications on'); scheduleNotify(0); queueRender(); }
   catch (e) { toast(e.message); }
 }
@@ -1110,7 +1113,11 @@ function fmtAnswer(t) {
   const flush = () => { if (list.length) out += `<ul>${list.map(l => `<li>${bold(l)}</li>`).join('')}</ul>`; list = []; };
   String(t).split(/\n+/).map(l => l.trim()).filter(Boolean).forEach(l => {
     const b = l.match(/^(?:[-*•]|\d+[.)])\s+(.*)/);
-    if (b) list.push(b[1]); else { flush(); out += `<p>${bold(l)}</p>`; }
+    // "💡 Try this: text…" on one line becomes a label plus a bullet per sentence.
+    const h = !b && l.match(/^(\p{Extended_Pictographic}️?\s*[^:]{2,30}):\s*(.+)$/u);
+    if (h) { flush(); out += `<p class="ans-h">${bold(h[1])}</p>`; list.push(...h[2].split(/(?<=[.!?])\s+(?=[A-Z*])/)); }
+    else if (b) list.push(b[1]);
+    else { flush(); out += `<p class="${!out ? 'ans-top' : l.length < 32 && !/[.!?]$/.test(l) ? 'ans-h' : ''}">${bold(l)}</p>`; }
   });
   flush();
   return out;
@@ -2690,31 +2697,97 @@ function fullscreen(html) {
   $('#fab').hidden = true;
 }
 
+// First-time setup: one small screen per thing the app needs, saved as she
+// goes, so quitting halfway picks up where she left off.
+const needsSetup = () => !profile() || profile().setupDone === false;
 function showWelcome() {
-  fullscreen(`<div class="welcome">
-    <img src="icons/icon-192.png" class="logo" alt="">
-    <h1>${OWNER ? `Hi ${esc(OWNER.name)}` : 'Welcome to Pulse'}</h1>
-    <p class="muted">${OWNER ? 'One quick thing before you start.' : 'Nutrition, recovery and digestion in one place.'}</p>
-    <form id="wf" class="card">
-      ${OWNER ? '' : `<div class="field"><label>Your name</label><input name="name" autocomplete="given-name" placeholder="First name" required></div>
-      <label class="check"><input type="checkbox" name="gf"> 🌾 I eat gluten-free (celiac)</label>`}
-      <h4 class="sec">Daily goals <span class="muted">— use the numbers from your dietitian</span></h4>
-      <div class="grid2">
-        <div class="field"><label>Calories</label><input name="cal" inputmode="decimal" value="${DEFAULT_GOALS.cal}"></div>
-        <div class="field"><label>Protein (g)</label><input name="p" inputmode="decimal" value="${DEFAULT_GOALS.p}"></div>
-        <div class="field"><label>Carbs (g)</label><input name="c" inputmode="decimal" value="${DEFAULT_GOALS.c}"></div>
-        <div class="field"><label>Fat (g)</label><input name="f" inputmode="decimal" value="${DEFAULT_GOALS.f}"></div>
-      </div>
-      <p class="muted tiny">You can change these anytime in the Me tab.</p>
-      <button class="btn primary big full">Let's go</button>
-    </form>
-  </div>`);
-  $('#wf').onsubmit = e => {
-    e.preventDefault();
-    const fd = new FormData(e.target);
-    saveProfile({ name: OWNER?.name || fd.get('name').trim(), number: OWNER?.number || '', glutenFree: OWNER?.glutenFree || fd.get('gf') === 'on', goals: { ...DEFAULT_GOALS, cal: num(fd.get('cal')), p: num(fd.get('p')), c: num(fd.get('c')), f: num(fd.get('f')) } });
-    startApp({ first: true });
+  const p0 = profile() || {};
+  let i = p0.setupStep || 0;
+  const tog = (k, on, label, sub) => `<button type="button" class="ob-tog ${on ? 'on' : ''}" data-tog="${k}"><span class="grow"><b>${label}</b><small>${sub}</small></span><span class="sw"><i></i></span></button>`;
+  const opt = (k, v, cur, e, label, sub) => `<button type="button" class="ob-opt ${cur === v ? 'on' : ''}" data-opt="${k}" data-v="${v}"><span class="ob-opt-e">${e}</span><span class="grow"><b>${label}</b><small>${sub}</small></span><span class="ob-radio"></span></button>`;
+  const STEPS = [
+    { k: 'hi', e: '👋', t: OWNER ? `Hi ${esc(OWNER.name)}!` : 'Welcome to Pulse',
+      b: () => `<p class="ob-lead">Let's get Pulse set up for you. About 2 minutes.</p>
+        <div class="ob-list"><span>🍽️ Food & macros</span><span>😴 Sleep & bedtime</span><span>💊 Meds</span><span>⌚ Calories burned</span><span>🔔 Reminders</span></div>
+        ${OWNER ? '' : `<div class="field mt"><label>Your first name</label><input id="obName" autocomplete="given-name" value="${esc(p0.name || '')}"></div>
+          ${tog('glutenFree', p0.glutenFree, '🌾 I eat gluten-free', 'Flags foods that have or may have gluten')}`}`,
+      go: 'Let\'s go',
+      save: () => { const n = $('#obName')?.value.trim(); if (!OWNER && !n) return toast('Type your name first'), false;
+        saveProfile({ setupDone: false, name: OWNER?.name || n, number: OWNER?.number || '', glutenFree: OWNER?.glutenFree || !!profile()?.glutenFree, goals: profile()?.goals || { ...DEFAULT_GOALS } }); } },
+    { k: 'goals', e: '🎯', t: 'Daily goals',
+      b: () => { const g = goals(); const f = (k, l, u) => `<div class="field"><label>${l}</label><div class="unit-in"><input data-g="${k}" inputmode="decimal" value="${g[k]}"><span>${u}</span></div></div>`;
+        return `<p class="ob-sub">Use your dietitian's numbers. Not sure? These are a solid start.</p>
+          <div class="grid2">${f('cal', 'Calories', 'cal')}${f('p', 'Protein', 'g')}${f('c', 'Carbs', 'g')}${f('f', 'Fat', 'g')}${f('water', 'Water', 'oz')}${f('fiber', 'Fiber', 'g')}</div>`; },
+      save: () => { const g = { ...goals() }; $$('[data-g]').forEach(x => { if (x.value.trim()) g[x.dataset.g] = num(x.value); }); saveProfile({ goals: g }); } },
+    { k: 'sleep', e: '😴', t: 'Sleep',
+      b: () => `<p class="ob-sub">Pulse plans your bedtime every night from these. Game nights move it automatically.</p>
+        <div class="field"><label>How much sleep do you want?</label><select id="obSleep">${[420, 450, 480, 510, 540, 570, 600].map(m => `<option value="${m}" ${m === sleepGoal() ? 'selected' : ''}>${fmtSleep(m)}</option>`).join('')}</select></div>
+        <div class="grid2"><div class="field"><label>Weekdays I wake up</label><input type="time" id="obWd" value="${wakeUsual(1)}"></div>
+        <div class="field"><label>Weekends I wake up</label><input type="time" id="obWe" value="${wakeUsual(6)}"></div></div>
+        <p class="muted tiny">Different on some days? Change single days later from the Sleep card.</p>`,
+      save: () => { const wd = $('#obWd').value || '06:00', we = $('#obWe').value || '07:00', w = { ...(profile()?.wakeByDay || {}) };
+        [1, 2, 3, 4, 5].forEach(d => { w[d] = wd; }); w[0] = w[6] = we; saveProfile({ sleepGoal: +$('#obSleep').value, wakeByDay: w }); } },
+    { k: 'meds', e: '💊', t: 'Meds & vitamins',
+      b: () => { const m = medList(); return `<p class="ob-sub">Check them off each day. Pulse only reminds you if you forget.</p>
+        ${m.length ? `<div class="ob-meds">${m.map(x => `<span>${medWhen(x) === 'Night' ? '🌙' : medWhen(x) === 'Morning' ? '☀️' : '🕒'} ${esc(x.name)}${medFood(x) ? ' 🍽️' : ''}</span>`).join('')}</div>` : ''}
+        <button type="button" class="btn soft full big" data-o="meds">${m.length ? '✏️ Edit my list' : '＋ Add what I take'}</button>`; },
+      go: () => medList().length ? 'Next' : 'Skip for now' },
+    { k: 'burn', e: '⌚', t: 'Calories burned',
+      b: () => { const cur = profile()?.burnFrom || 'type';
+        return `<p class="ob-sub">Active + resting calories, heart rate and recovery from your Whoop or Apple Watch.</p>
+        ${opt('burnFrom', 'type', cur, '✏️', 'I\'ll type it in', 'Quick and easy. Takes 10 seconds a day.')}
+        ${opt('burnFrom', 'health', cur, '🍎', 'Auto-fill from Apple Health', 'One-time 5-minute setup, right after this')}
+        <p class="muted tiny">You can switch anytime from the Recovery card.</p>`; } },
+    { k: 'extras', e: '✨', t: 'Extras',
+      b: () => { const p = profile() || {};
+        return `<p class="ob-sub">Turn on what you want. Both stay private.</p>
+        ${tog('showPeriod', p.showPeriod ?? true, '🌸 Period tracking', 'A small row at the bottom of Today')}
+        ${tog('showWeight', !!p.showWeight, '⚖️ Body weight', 'A weight card with a 7-day average')}`; } },
+    { k: 'notify', e: '🔔', t: 'Reminders',
+      b: () => `<p class="ob-sub">Only the useful ones, never spammy:</p>
+        <div class="ob-list col"><span>🌙 30 min before your bedtime</span><span>💊 Meds, only if not checked off</span><span>🏀 Game day</span><span>🏆 When the Pilots win</span></div>
+        ${ui.notifyOn ? `<p class="ob-ok">✅ Reminders are on</p>`
+          : !notify.installed() && !NEW ? `<div class="ob-install"><b>First, add Pulse to your Home Screen:</b><ol><li>Tap <b>Share</b> <span class="muted">(square with arrow)</span></li><li>Tap <b>Add to Home Screen</b></li><li>Open Pulse from your Home Screen</li></ol></div>`
+          : `<button type="button" class="btn primary full big" data-o="notify">🔔 Turn on reminders</button>`}`,
+      go: () => ui.notifyOn ? 'Next' : 'Maybe later' },
+    { k: 'done', e: '🎉', t: 'You\'re all set!',
+      b: () => { const p = profile() || {}, g = goals(), m = medList();
+        return `<div class="ob-sum">
+          <span>🎯 ${fmt(g.cal)} cal · ${fmt(g.p)}g protein</span>
+          <span>😴 ${fmtSleep(sleepGoal())} of sleep, bed by ${fmtTime(bedGoal())} tonight</span>
+          <span>💊 ${m.length ? plural(m.length, 'med') : 'No meds yet'}</span>
+          <span>⌚ ${p.burnFrom === 'health' ? 'Apple Health (setting up next)' : 'Typing it in'}</span>
+          <span>🔔 ${ui.notifyOn ? 'Reminders on' : 'Reminders off for now'}</span></div>
+          <p class="ob-sub mt">Tap <b>＋</b> to log food, and <b>✨ Ask</b> anytime to ask about you.</p>`; },
+      go: 'Start using Pulse' },
+  ];
+  const draw = () => {
+    const st = STEPS[i], go = typeof st.go === 'function' ? st.go() : st.go || 'Next';
+    fullscreen(`<div class="ob">
+      <div class="ob-top">${i > 0 ? `<button class="ob-back" data-o="back" aria-label="Back">‹</button>` : '<span></span>'}<div class="ob-bar"><i style="width:${(i + 1) / STEPS.length * 100}%"></i></div><span class="ob-n">${i + 1}/${STEPS.length}</span></div>
+      <div class="ob-body"><div class="ob-e">${st.e}</div><h1>${st.t}</h1>${st.b()}</div>
+      <div class="ob-foot"><button class="btn primary big full" data-o="next">${go}</button></div></div>`);
+    window.scrollTo(0, 0);
   };
+  main.onclick = async e => {
+    const t = e.target.closest('[data-o],[data-tog],[data-opt]');
+    if (!t || !main.querySelector('.ob')) return;
+    if (t.dataset.tog) { const k = t.dataset.tog, on = !t.classList.contains('on'); t.classList.toggle('on', on); return saveProfile({ [k]: on }); }
+    if (t.dataset.opt) { $$(`[data-opt="${t.dataset.opt}"]`).forEach(b => b.classList.toggle('on', b === t)); return saveProfile({ [t.dataset.opt]: t.dataset.v }); }
+    const o = t.dataset.o;
+    if (o === 'back') { i--; saveProfile({ setupStep: i }); return draw(); }
+    if (o === 'meds') { const s = openMeds(); const was = s?.onClose; if (s) s.onClose = () => { was?.(); draw(); }; return; }
+    if (o === 'notify') { await turnOnNotify(); return draw(); }
+    if (o !== 'next') return;
+    if (STEPS[i].save?.() === false) return;
+    if (i < STEPS.length - 1) { i++; saveProfile({ setupStep: i }); return draw(); }
+    main.onclick = null;
+    saveProfile({ setupDone: true, setupStep: 0 });
+    startApp({ first: true });
+    celebrate("Let's go! 🏀", true);
+    if (profile()?.burnFrom === 'health') setTimeout(openHealthGuide, 2600);
+  };
+  draw();
 }
 
 function showAuth(mode = 'in', msg = '') {
@@ -2773,7 +2846,7 @@ async function afterLogin(user) {
   await db.init(user.id);
   await sync.syncNow();
   applyOwner();
-  if (!profile()) showWelcome(); else startApp();
+  if (needsSetup()) showWelcome(); else startApp();
 }
 
 function startApp({ first = false } = {}) {
@@ -2847,6 +2920,11 @@ async function boot() {
       if (day !== dateStr()) await new Promise(r => { const q = indexedDB.deleteDatabase('pulse-demo'); q.onsuccess = q.onerror = q.onblocked = r; });
       await db.init('demo');
       if (!profile()) { await (await import('./demo.js')).seedDemo(); localStorage.setItem('pulseDemoDay', dateStr()); }
+    } else if (NEW) {
+      await new Promise(r => { const q = indexedDB.deleteDatabase('pulse-new'); q.onsuccess = q.onerror = q.onblocked = r; });
+      await db.init('new');
+      document.body.classList.add('is-new');
+      document.body.insertAdjacentHTML('beforeend', '<button class="demo-tag new" onclick="location.reload()">First-time test ↻</button>');
     } else if (sync.enabled) {
       const user = await sync.getUser(askNewPassword);
       if (!user) return showAuth();
@@ -2857,7 +2935,7 @@ async function boot() {
     }
     applyTheme();
     applyOwner();
-    if (!profile()) showWelcome(); else startApp();
+    if (needsSetup()) showWelcome(); else startApp();
   } catch (e) {
     console.error(e);
     fullscreen(`<div class="welcome"><h1>Hmm…</h1><p class="muted">Pulse couldn't start: ${esc(e.message)}</p><button class="btn primary" onclick="location.reload()">Try again</button></div>`);
