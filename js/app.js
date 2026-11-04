@@ -7,6 +7,7 @@ import { analyzeGut, guessTags, compareDays, median } from './patterns.js';
 import { offSearch, offBarcode, startScanner, readLabel } from './lookup.js';
 import { drawSummary } from './share-image.js';
 import { GAMES, gameOn, nextGame, teamLogo } from './games.js';
+import { parseHealth, SHORTCUT_NAME } from './health.js';
 
 // ---------- constants ----------
 const MEALS = [
@@ -44,6 +45,8 @@ const OFF_LEVELS = [
   { v: 1, e: '😐', t: 'A little off' }, { v: 2, e: '😕', t: 'Off' }, { v: 3, e: '😟', t: 'Pretty off' },
   { v: 4, e: '😣', t: 'Bad' }, { v: 5, e: '😵', t: 'Really bad' }];
 const DEFAULT_GOALS = { cal: 2400, p: 140, c: 300, f: 75, fiber: 30, water: 100 };
+// This copy of Pulse is set up for Carly. Set to null to go back to asking each person.
+const OWNER = { name: 'Carly', number: '11', glutenFree: true };
 
 const profile = () => db.get('settings', 'profile');
 const goals = () => ({ ...DEFAULT_GOALS, ...(profile()?.goals || {}) });
@@ -362,13 +365,14 @@ function gfPrompt() {
 const toMin = t => { const [h, m] = t.split(':').map(Number); return ((h + 12) % 24) * 60 + m; };
 const fromMin = x => { x = ((Math.round(x) % 1440) + 1440) % 1440; const h = (Math.floor(x / 60) + 12) % 24; return `${String(h).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
 const bedGoal = () => profile()?.bedGoal || '21:00';
+// Nights she forgot to log are skipped, not counted as misses (up to 3 in a row).
 function sleepStreak() {
-  let d = dateStr(), n = 0;
-  if (!db.get('days', d)?.bed) d = addDays(d, -1);
-  for (;;) {
+  let d = dateStr(), n = 0, gap = 0;
+  while (gap <= 3) {
     const b = db.get('days', d)?.bed;
-    if (!b || Math.abs(toMin(b) - toMin(bedGoal())) > 30) break;
-    n++; d = addDays(d, -1);
+    if (!b) { gap++; d = addDays(d, -1); continue; }
+    if (Math.abs(toMin(b) - toMin(bedGoal())) > 30) break;
+    n++; gap = 0; d = addDays(d, -1);
   }
   return n;
 }
@@ -384,6 +388,85 @@ function sleepCard(date, day) {
       </div>` : `<p class="muted small">Log when you went to bed and woke up. Pulse tracks how close you stay to your ${fmtTime(bedGoal())} bedtime.</p>`}
     ${last7.length ? `<div class="sleep-goal"><span>🎯 Near your ${fmtTime(bedGoal())} bedtime <b>${near} of the last ${last7.length} nights</b></span>${st >= 2 ? `<span class="streak">🔥 ${st} in a row</span>` : ''}</div>` : ''}
   </section>`;
+}
+
+// ---------- Apple Health (through an iPhone Shortcut) ----------
+// Web apps can't read Health directly, so a Shortcut copies the numbers and
+// Pulse pastes them. Only empty fields get filled; nothing she typed is replaced.
+const HEALTH_FIELDS = { bed: ['today', 'bedtime', fmtTime], wake: ['today', 'wake time', fmtTime], sleepMin: ['today', 'sleep', fmtSleep],
+  rhr: ['today', 'resting HR', v => v + ' bpm'], hrv: ['today', 'HRV', v => v + ' ms'],
+  burned: ['yesterday', 'calories burned', v => fmt(v) + ' cal'], steps: ['yesterday', 'steps', v => fmt(v)] };
+function applyHealth(h) {
+  const t = dateStr(), y = addDays(t, -1);
+  const recs = { today: { ...(db.get('days', t) || { id: t, date: t }) }, yesterday: { ...(db.get('days', y) || { id: y, date: y }) } };
+  const added = [], kept = [];
+  for (const [k, [when, label, show]] of Object.entries(HEALTH_FIELDS)) {
+    if (h[k] == null) continue;
+    if (recs[when][k] != null) { kept.push(label); continue; }
+    recs[when][k] = h[k];
+    added.push(`${label} ${show(h[k])}${when === 'yesterday' ? ' (yesterday)' : ''}`);
+  }
+  const r = recs.today;
+  if (r.sleepMin == null && r.bed && r.wake) { r.sleepMin = (toMin(r.wake) - toMin(r.bed) + 1440) % 1440; added.push(`sleep ${fmtSleep(r.sleepMin)}`); }
+  if (added.length) { db.put('days', recs.today); db.put('days', recs.yesterday); }
+  return { added, kept };
+}
+function healthSync() {
+  if (!profile()?.healthReady) return openHealthGuide();
+  try { sessionStorage.setItem('pulseHealth', String(Date.now())); } catch {}
+  location.href = `shortcuts://run-shortcut?name=${encodeURIComponent(SHORTCUT_NAME)}`;
+}
+async function healthPaste() {
+  $('#pasteBar')?.remove();
+  try { sessionStorage.removeItem('pulseHealth'); } catch {}
+  let text = '';
+  try { text = await navigator.clipboard.readText(); } catch { return toast("Couldn't read the clipboard. Tap Paste when it asks."); }
+  const h = parseHealth(text);
+  if (!h) return toast('No Health numbers found. Run the Pulse Sync shortcut first.');
+  const { added, kept } = applyHealth(h);
+  openSheet({
+    title: '⌚ From Apple Health',
+    body: `${added.length ? `<p class="small">Added:</p>${added.map(a => `<div class="kv-row"><span>✓ ${esc(a)}</span></div>`).join('')}` : '<p class="small">Nothing new to add.</p>'}
+      ${kept.length ? `<p class="muted tiny mt">Kept what you'd already entered for ${esc(kept.join(', '))}.</p>` : ''}
+      <p class="muted tiny">Anything Health didn't have just stays blank. You can fill it in by hand anytime.</p>`,
+    footer: `<button class="btn primary grow" data-x="close">Done</button>`,
+  });
+}
+// After the Shortcut runs and she comes back, offer a one-tap paste.
+function offerPaste() {
+  let t = 0;
+  try { t = +sessionStorage.getItem('pulseHealth') || 0; } catch {}
+  if (!t || Date.now() - t > 10 * 60e3 || $('#pasteBar')) return;
+  const b = document.createElement('button');
+  b.id = 'pasteBar'; b.className = 'paste-bar'; b.dataset.act = 'healthPaste';
+  b.innerHTML = '📋 Tap to add your Apple Health numbers';
+  document.body.appendChild(b);
+}
+function openHealthGuide() {
+  const s = openSheet({
+    title: 'Sync from Apple Health', full: true,
+    body: `<p class="small">Pulse can't read Apple Health on its own (Apple only allows that for App Store apps). An iPhone Shortcut grabs the numbers and Pulse pastes them in. You set it up once.</p>
+      <ol class="guide">
+        <li>Open the <b>Shortcuts</b> app, tap <b>＋</b>, and name the shortcut <b>${SHORTCUT_NAME}</b> (exactly that).</li>
+        <li><b>Resting heart rate:</b> add <b>Find Health Samples</b>. Type: Resting Heart Rate. Sort by Start Date, Latest First, Limit 1.</li>
+        <li><b>Sleep:</b> add another <b>Find Health Samples</b>. Type: Sleep Analysis. Filter: Start Date is in the last 16 hours. Sort by Start Date, Oldest First. If both Whoop and the Watch save sleep, also add a filter "Source is" and pick one.</li>
+        <li><b>Bedtime:</b> add <b>Get Details of Health Samples</b> → Start Date (use the sleep samples), then <b>Get Item from List</b> → First Item, then <b>Format Date</b> → Custom → <code>HH:mm</code>.</li>
+        <li><b>Wake time:</b> add <b>Get Details of Health Samples</b> → End Date (sleep samples again), then <b>Get Item from List</b> → Last Item, then <b>Format Date</b> → Custom → <code>HH:mm</code>.</li>
+        <li><b>Calories:</b> add <b>Find Health Samples</b> → Active Energy, Start Date is Yesterday, then <b>Calculate Statistics</b> → Sum. Do the same for <b>Resting Energy</b>.</li>
+        <li>Add a <b>Text</b> action and type these lines, putting each result from above after its label:
+          <pre>bed: (bedtime)
+wake: (wake time)
+rhr: (resting heart rate)
+active: (active energy sum)
+resting: (resting energy sum)</pre></li>
+        <li>Add <b>Copy to Clipboard</b> as the last step.</li>
+      </ol>
+      <p class="small"><b>Using it:</b> tap <b>⌚ Sync from Apple Health</b>. The shortcut runs, then tap <b>◀ Pulse</b> in the top-left corner to come back and tap the purple bar to add the numbers.</p>
+      <p class="muted tiny">Pulse only fills in blanks, so it never overwrites what you typed from Whoop. Missing numbers (like a night without your watch) are just left empty. You can also run the shortcut from the Shortcuts app, come back, and tap Paste below.</p>`,
+    footer: `<button class="btn ghost" data-x="paste">Paste</button><button class="btn primary grow" data-x="ready">${profile()?.healthReady ? 'Run it now' : "I've made the shortcut"}</button>`,
+  });
+  s.on('click', '[data-x="paste"]', () => { s.close(); healthPaste(); });
+  s.on('click', '[data-x="ready"]', () => { saveProfile({ healthReady: true }); s.close(); healthSync(); });
 }
 
 // ---------- meds & vitamins ----------
@@ -576,6 +659,7 @@ function bodyCard(d) {
     <div class="card-head"><h3>⌚ Recovery</h3><span class="link">${items.length ? 'Edit' : 'Log'}</span></div>
     ${items.length ? `<div class="stat-grid">${items.map(i => `<div class="stat"><span class="stat-ico">${i[0]}</span><div><div class="stat-v">${esc(i[2])}</div><div class="stat-l">${i[1]}</div></div></div>`).join('')}</div>`
     : `<p class="muted small">Heart rate, calories burned, recovery and strain from your Whoop or Apple Watch, all in one place.</p>`}
+    <button class="btn soft full mt health-btn" data-act="healthSync">⌚ Sync from Apple Health</button>
   </section>`;
 }
 
@@ -896,12 +980,11 @@ function screenMe() {
       <div class="avatar ${p.number ? 'jersey' : ''}">${p.number ? esc(p.number) : esc(firstName()[0]?.toUpperCase() || '?')}</div>
       <div class="grow"><input class="name-in" value="${esc(p.name || '')}" placeholder="Your name" data-change="name" aria-label="Your name">
       <div class="muted small">${cloud ? esc(cloud.email) : 'Saved on this phone'}</div></div>
-      <div class="field num-field"><label>Jersey #</label><input inputmode="numeric" maxlength="2" value="${esc(p.number || '')}" placeholder="–" data-change="number" aria-label="Jersey number"></div>
     </section>
 
     <section class="card">
       <h3>Your setup</h3>
-      ${switchRow('glutenFree', '🌾 I eat gluten-free', 'Flags foods and recipes that contain or may contain gluten.')}
+      ${OWNER?.glutenFree ? '' : switchRow('glutenFree', '🌾 I eat gluten-free', 'Flags foods and recipes that contain or may contain gluten.')}
       ${switchRow('showWeight', '⚖️ Show body weight', 'Off by default. Turns on the weight tracker in Trends and on your recovery card.')}
       <div class="kv-row"><span>🌙 Bedtime goal<div class="muted tiny">Sleep card tracks how close you stay to it</div></span><input type="time" class="time-in" value="${bedGoal()}" data-change="bedGoal" aria-label="Bedtime goal"></div>
       <button class="btn soft full mt" data-act="editMeds">💊 Edit meds & vitamins</button>
@@ -978,6 +1061,9 @@ const acts = {
   med: d => toggleMed(d.id),
   editMeds: () => openMeds(),
   journal: () => openJournal(),
+  healthSync: () => healthSync(),
+  healthPaste: () => healthPaste(),
+  healthGuide: () => openHealthGuide(),
   toggle: d => saveProfile({ [d.k]: !profile()?.[d.k] }),
   eatPrep: d => eatPrep(d.id),
   editPrep: d => openPrep({ prep: db.get('preps', d.id) }),
@@ -991,7 +1077,6 @@ const changes = {
   pickDate: el => { if (el.value) { ui.date = el.value; render(); } },
   goal: el => { const g = goals(); g[el.dataset.k] = num(el.value); saveProfile({ goals: g }); },
   name: el => saveProfile({ name: el.value.trim() }),
-  number: el => saveProfile({ number: el.value.replace(/[^0-9]/g, '').slice(0, 2) }),
   bedGoal: el => { if (el.value) saveProfile({ bedGoal: el.value }); },
   restore: el => restoreBackup(el.files[0]),
 };
@@ -1022,6 +1107,16 @@ main.addEventListener('touchend', e => {
 function saveProfile(patch) {
   const p = { ...(profile() || { id: 'profile' }), ...patch, id: 'profile' };
   db.put('settings', p);
+}
+// Fills in her name, number and gluten-free setting without asking.
+function applyOwner() {
+  const p = profile();
+  if (!OWNER || !p) return;
+  const patch = {};
+  if (!p.name) patch.name = OWNER.name;
+  if (!p.number) patch.number = OWNER.number;
+  if (OWNER.glutenFree && !p.glutenFree) patch.glutenFree = true;
+  if (Object.keys(patch).length) saveProfile(patch);
 }
 function applyTheme() {
   const t = profile()?.theme || 'system';
@@ -1906,13 +2001,12 @@ function fullscreen(html) {
 function showWelcome() {
   fullscreen(`<div class="welcome">
     <img src="icons/icon-192.png" class="logo" alt="">
-    <h1>Welcome to Pulse</h1>
-    <p class="muted">Nutrition, recovery and digestion in one place.</p>
+    <h1>${OWNER ? `Hi ${esc(OWNER.name)}` : 'Welcome to Pulse'}</h1>
+    <p class="muted">${OWNER ? 'One quick thing before you start.' : 'Nutrition, recovery and digestion in one place.'}</p>
     <form id="wf" class="card">
-      <div class="grid-name"><div class="field"><label>Your name</label><input name="name" autocomplete="given-name" placeholder="First name" required></div>
-        <div class="field"><label>Jersey #</label><input name="number" inputmode="numeric" maxlength="2" placeholder="opt."></div></div>
-      <label class="check"><input type="checkbox" name="gf"> 🌾 I eat gluten-free (celiac)</label>
-      <h4 class="sec">Daily goals <span class="muted">— from your dietitian, or a starting guess</span></h4>
+      ${OWNER ? '' : `<div class="field"><label>Your name</label><input name="name" autocomplete="given-name" placeholder="First name" required></div>
+      <label class="check"><input type="checkbox" name="gf"> 🌾 I eat gluten-free (celiac)</label>`}
+      <h4 class="sec">Daily goals <span class="muted">— use the numbers from your dietitian</span></h4>
       <div class="grid2">
         <div class="field"><label>Calories</label><input name="cal" inputmode="decimal" value="${DEFAULT_GOALS.cal}"></div>
         <div class="field"><label>Protein (g)</label><input name="p" inputmode="decimal" value="${DEFAULT_GOALS.p}"></div>
@@ -1926,7 +2020,7 @@ function showWelcome() {
   $('#wf').onsubmit = e => {
     e.preventDefault();
     const fd = new FormData(e.target);
-    saveProfile({ name: fd.get('name').trim(), number: String(fd.get('number') || '').replace(/[^0-9]/g, '').slice(0, 2), glutenFree: fd.get('gf') === 'on', goals: { ...DEFAULT_GOALS, cal: num(fd.get('cal')), p: num(fd.get('p')), c: num(fd.get('c')), f: num(fd.get('f')) } });
+    saveProfile({ name: OWNER?.name || fd.get('name').trim(), number: OWNER?.number || '', glutenFree: OWNER?.glutenFree || fd.get('gf') === 'on', goals: { ...DEFAULT_GOALS, cal: num(fd.get('cal')), p: num(fd.get('p')), c: num(fd.get('c')), f: num(fd.get('f')) } });
     startApp({ first: true });
   };
 }
@@ -1986,6 +2080,7 @@ async function afterLogin(user) {
   fullscreen(`<div class="welcome"><img src="icons/icon-192.png" class="logo pulse" alt=""><p class="muted">Loading your data…</p></div>`);
   await db.init(user.id);
   await sync.syncNow();
+  applyOwner();
   if (!profile()) showWelcome(); else startApp();
 }
 
@@ -2036,6 +2131,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
   const t = dateStr();
   if (t !== lastToday) { if (ui.date === lastToday) ui.date = t; lastToday = t; queueRender(); }
+  offerPaste();
   sync.schedule(100);
 });
 window.addEventListener('online', () => sync.schedule(100));
@@ -2052,6 +2148,7 @@ async function boot() {
       await db.init('local');
     }
     applyTheme();
+    applyOwner();
     if (!profile()) showWelcome(); else startApp();
   } catch (e) {
     console.error(e);
