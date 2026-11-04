@@ -77,7 +77,7 @@ export async function seedDemo() {
   const games = new Set((await import('./games.js')).GAMES.map(g => g.date));
   const period = new Set([...[0, 1, 2, 3, 4].map(i => addDays(today, -56 + i)), ...[0, 1, 2, 3, 4].map(i => addDays(today, -28 + i)), addDays(today, -1), today]);
   const flows = ['medium', 'heavy', 'heavy', 'light', 'spotting'];
-  const meds = [{ id: 'm1', name: 'Vitamin D3', when: 'Morning' }, { id: 'm2', name: 'Multivitamin', when: 'Morning' }, { id: 'm3', name: 'Iron', when: 'With food' }, { id: 'm4', name: 'Magnesium', when: 'Night' }];
+  const meds = [{ id: 'm1', name: 'Vitamin D3', when: 'Morning' }, { id: 'm2', name: 'Multivitamin', when: 'Morning' }, { id: 'm3', name: 'Iron', when: 'Morning', food: true }, { id: 'm4', name: 'Magnesium', when: 'Night', food: true }];
   const notes = ['Legs felt heavy at practice but shooting was good.', 'Lift was hard. PR on trap bar deadlift though.', 'Slept great, felt fast today.',
     'Stomach was off after lunch. Not sure why.', 'Film + recovery day. Iced after.', 'Coach said my defense looked better.', 'Tired. Need to get to bed on time tonight.'];
 

@@ -33,7 +33,10 @@ const GF = {
 const ACTIVITIES = [['practice', '🏀', 'Practice'], ['shoot', '🎯', 'Shoot-around'], ['weights', '🏋️', 'Weights', 'with the team'], ['workout', '💪', 'Workout', 'on your own'], ['rest', '😌', 'Rest day']];
 // Older logs said 'lift' for team weights.
 const actsOf = day => (day?.activity || []).map(a => a === 'lift' ? 'weights' : a);
-const MED_TIMES = ['Morning', 'With food', 'Night', 'Anytime'];
+const MED_TIMES = ['Morning', 'Night', 'Anytime'];
+// Older lists had 'With food' as its own time; that meant morning, with food.
+const medWhen = m => m.when === 'With food' ? 'Morning' : m.when || 'Anytime';
+const medFood = m => !!m.food || m.when === 'With food';
 const WHERE = ['Upper stomach', 'Lower stomach', 'All over'];
 const DURATION = ['Under 30 min', '1–2 hours', 'Several hours', 'All day'];
 const SEVERITY = [
@@ -558,11 +561,11 @@ function medsCard(date, day) {
     <p class="muted small">Add what you take every day, then check things off with one tap.</p>
     <button class="btn soft full" data-act="editMeds">＋ Set up my list</button></section>`;
   const done = meds.filter(m => taken[m.id]).length;
-  const groups = MED_TIMES.map(t => [t, meds.filter(m => (m.when || 'Anytime') === t)]).filter(g => g[1].length);
+  const groups = MED_TIMES.map(t => [t, meds.filter(m => medWhen(m) === t)]).filter(g => g[1].length);
   return `<section class="card meds">
     <div class="card-head"><h3>💊 Meds & vitamins</h3><span class="muted small">${done === meds.length ? '✅ All done' : `${done} of ${meds.length}`}</span></div>
     ${groups.map(([t, list]) => `<div class="med-group">${groups.length > 1 ? `<div class="med-when">${t}</div>` : ''}${list.map(m => `<button class="med ${taken[m.id] ? 'on' : ''}" data-act="med" data-id="${m.id}">
-      <span class="med-box">${taken[m.id] ? '✓' : ''}</span><span class="grow">${esc(m.name)}</span>${taken[m.id] ? `<span class="muted tiny">${fmtTime(taken[m.id])}</span>` : ''}</button>`).join('')}</div>`).join('')}
+      <span class="med-box">${taken[m.id] ? '✓' : ''}</span><span class="grow">${esc(m.name)}${medFood(m) ? `<span class="med-food">🍽️ with food</span>` : ''}</span>${taken[m.id] ? `<span class="muted tiny">${fmtTime(taken[m.id])}</span>` : ''}</button>`).join('')}</div>`).join('')}
     <button class="link-btn" data-act="editMeds">Edit list</button>
   </section>`;
 }
@@ -580,20 +583,24 @@ function openMeds() {
     body: `<p class="muted small">Only you see this list. Add each thing you take and when you usually take it.</p>
       <div id="ml"></div>
       <div class="add-med"><input id="mn" placeholder="e.g. Vitamin D, Iron, Zyrtec" autocomplete="off">
-      <div class="chips" id="mw">${MED_TIMES.map((t, i) => `<button class="chip sm ${i === 0 ? 'on' : ''}" data-x="when" data-v="${t}">${t}</button>`).join('')}</div>
+      <div class="chips" id="mw">${MED_TIMES.map((t, i) => `<button class="chip sm ${i === 0 ? 'on' : ''}" data-x="when" data-v="${t}">${t === 'Morning' ? '☀️' : t === 'Night' ? '🌙' : '🕒'} ${t}</button>`).join('')}
+        <button class="chip sm" data-x="food">🍽️ With food</button></div>
       <button class="btn soft full" data-x="add">＋ Add</button></div>`,
     footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save list</button>`,
   });
-  let when = MED_TIMES[0];
+  let when = MED_TIMES[0], food = false;
   const draw = () => {
-    s.$('#ml').innerHTML = meds.length ? meds.map((m, i) => `<div class="kv-row"><span>💊 ${esc(m.name)} <span class="muted tiny">${m.when}</span></span><button class="icon-btn" data-x="rm" data-n="${i}" aria-label="Remove">✕</button></div>`).join('')
+    s.$('#ml').innerHTML = meds.length ? meds.map((m, i) => `<div class="kv-row"><span>💊 ${esc(m.name)} <span class="muted tiny">${medWhen(m)}</span></span>
+      <span class="med-edit"><button class="chip sm ${medFood(m) ? 'on' : ''}" data-x="mfood" data-n="${i}">🍽️ With food</button><button class="icon-btn" data-x="rm" data-n="${i}" aria-label="Remove">✕</button></span></div>`).join('')
       : `<p class="muted small center">Nothing added yet.</p>`;
   };
   s.on('click', '[data-x="when"]', el => { when = el.dataset.v; s.$$('[data-x="when"]').forEach(b => b.classList.toggle('on', b === el)); });
+  s.on('click', '[data-x="food"]', el => { food = !food; el.classList.toggle('on', food); });
+  s.on('click', '[data-x="mfood"]', el => { const m = meds[+el.dataset.n]; m.food = !medFood(m); m.when = medWhen(m); draw(); });
   s.on('click', '[data-x="add"]', () => {
     const name = s.$('#mn').value.trim();
     if (!name) return s.$('#mn').focus();
-    meds.push({ id: uid(), name, when });
+    meds.push({ id: uid(), name, when, food });
     s.$('#mn').value = ''; s.$('#mn').focus(); draw();
   });
   s.on('click', '[data-x="rm"]', el => { meds.splice(+el.dataset.n, 1); draw(); });
@@ -677,11 +684,12 @@ const NOTIFS = [
   ['n_bed', '🌙 Bedtime', "30 minutes before that night's planned bedtime.", true],
   ['n_game', '🏀 Game days', 'The morning of each game, with who you play and when.', true],
   ['n_prep', '🥡 Meal prep', "Once, when you're down to your last container.", true],
-  ['n_meds', '💊 Meds reminder', "Only if you haven't checked them off by the time you pick below.", true],
+  ['n_meds', '💊 Meds reminder', "Only if they're not checked off yet.", true],
   ['n_period', '🌸 Period heads-up', 'The evening before it might start. The lock screen just says "Heads-up".', false],
 ];
 const hmMinus = (t, m) => { const x = +t.slice(0, 2) * 60 + +t.slice(3) - m; return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
-const medsTime = () => profile()?.medsTime || '09:00';
+const medsAm = () => profile()?.medsAm || profile()?.medsTime || '09:00';
+const medsPm = () => profile()?.medsPm || '20:00';
 const nOn = k => profile()?.[k] ?? NOTIFS.find(n => n[0] === k)[3];
 function notifyItems() {
   const t = dateStr(), items = [];
@@ -695,10 +703,9 @@ function notifyItems() {
     items.push({ id: 'game-' + g.date, date: g.date, at: g.time && g.time < '12:00' ? hmMinus(g.time, 180) : '09:00', ttl: 10800, title: '🏀 Game day', body: `${vsAt(g)} ${g.opp} · ${gameTime(g)}` }));
   const meds = medList();
   if (nOn('n_meds') && meds.length) {
-    // A daytime reminder ignores night meds; she hasn't taken those yet.
-    const at = medsTime(), taken = db.get('days', t)?.meds || {};
-    const due = at < '17:00' && meds.some(m => m.when !== 'Night') ? meds.filter(m => m.when !== 'Night') : meds;
-    items.push({ id: 'meds', at, ttl: 7200, skip: due.every(m => taken[m.id]) ? [t] : [], title: '💊 Meds & vitamins', body: "Haven't checked them off yet today." });
+    const taken = db.get('days', t)?.meds || {}, am = meds.filter(m => medWhen(m) !== 'Night'), pm = meds.filter(m => medWhen(m) === 'Night');
+    if (am.length) items.push({ id: 'meds-am', at: medsAm(), ttl: 7200, skip: am.every(m => taken[m.id]) ? [t] : [], title: '💊 Morning meds', body: "Not checked off yet today." });
+    if (pm.length) items.push({ id: 'meds-pm', at: medsPm(), ttl: 7200, skip: pm.every(m => taken[m.id]) ? [t] : [], title: '💊 Night meds', body: "Not checked off yet tonight." });
   }
   const preps = activePreps(), left = preps.reduce((a, p) => a + p.left, 0);
   if (nOn('n_prep') && left > 0 && left <= 1) {
@@ -738,9 +745,16 @@ function notifyCard() {
     ${NOTIFS.filter(n => n[0] !== 'n_period' || periodOn()).map(([k, l, sub, def]) => switchRow(k, l, sub, def) + (k === 'n_meds' && nOn('n_meds') ? medsTimeRow() : '')).join('')}
   </section>`;
 }
+// Two plain dropdowns instead of a clock: "Morning meds: 9:00 AM".
 function medsTimeRow() {
-  if (!medList().length) return `<button class="btn soft full mb" data-act="editMeds">💊 Add your meds first</button>`;
-  return `<div class="kv-row"><span>⏰ Remind me at<div class="muted tiny">Skipped on days you've already checked them off</div></span><input type="time" class="time-in" value="${medsTime()}" data-change="medsTime" aria-label="Meds reminder time"></div>`;
+  const meds = medList();
+  if (!meds.length) return `<button class="btn soft full mb" data-act="editMeds">💊 Add your meds first</button>`;
+  const opts = (from, to, cur) => { let o = ''; for (let m = from; m <= to; m += 30) { const v = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`; o += `<option value="${v}" ${v === cur ? 'selected' : ''}>${fmtTime(v)}</option>`; } return o; };
+  const row = (label, key, html) => `<div class="kv-row remind-row"><span>${label}</span><select class="time-in" data-change="${key}">${html}</select></div>`;
+  return `<div class="remind">
+    ${meds.some(m => medWhen(m) !== 'Night') ? row('☀️ Morning meds', 'medsAm', opts(300, 780, medsAm())) : ''}
+    ${meds.some(m => medWhen(m) === 'Night') ? row('🌙 Night meds', 'medsPm', opts(960, 1410, medsPm())) : ''}
+  </div>`;
 }
 // If the app is open at 11:11 AM, a small note shows for that minute only.
 function wishCheck() {
@@ -757,19 +771,45 @@ setInterval(wishCheck, 5000);
 // ---------- journal ----------
 function journalCard(day) {
   return `<section class="card tap" data-act="journal">
-    <div class="card-head"><h3>📓 Journal</h3><span class="link">${day.notes ? 'Edit' : 'Write'}</span></div>
-    ${day.notes ? `<p class="journal-txt">${esc(day.notes)}</p>` : `<p class="muted small">How practice went, soreness, mood, anything on your mind.</p>`}
+    <div class="card-head"><h3>📓 Journal <span class="lock">🔒</span></h3><span class="link">${day.notes ? 'Edit' : 'Write'}</span></div>
+    ${day.notes ? `<p class="journal-txt">${esc(day.notes)}</p>` : `<p class="muted small">How practice went, soreness, mood, anything on your mind. Just for you.</p>`}
+    <button class="talk-btn" data-act="journalTalk">🎙️ Talk instead of typing</button>
   </section>`;
 }
-function openJournal(date = ui.date) {
+const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
+function openJournal(date = ui.date, talk = false) {
   const d = { ...(db.get('days', date) || { id: date, date }) };
   const s = openSheet({
     title: `Journal · ${fmtDay(date)}`, full: true, lock: true,
-    body: `<textarea id="jt" class="journal-in" rows="12" placeholder="How did today go?">${esc(d.notes || '')}</textarea>`,
+    body: `<button class="talk-big" data-x="talk"><span class="talk-dot"></span><span id="tl">🎙️ Tap and talk</span></button>
+      <textarea id="jt" class="journal-in" rows="10" placeholder="How did today go?">${esc(d.notes || '')}</textarea>
+      <p class="muted tiny center">🔒 Just for you. Stays on this phone.</p>`,
     footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
   });
-  s.on('click', '[data-x="save"]', () => { d.notes = s.$('#jt').value.trim(); db.put('days', d); s.close(); toast('Saved'); });
-  s.$('#jt').focus();
+  const ta = s.$('#jt'), btn = s.$('[data-x="talk"]');
+  let rec = null, base = '';
+  const stop = () => { if (rec) { const r = rec; rec = null; r.stop(); } btn.classList.remove('on'); s.$('#tl').textContent = '🎙️ Tap and talk'; };
+  function start() {
+    // No speech support (some home-screen apps): the keyboard mic does the same thing.
+    if (!Speech) { ta.focus(); return toast('Tap the 🎤 on your keyboard and talk'); }
+    base = ta.value.trim();
+    rec = new Speech();
+    Object.assign(rec, { continuous: true, interimResults: true, lang: navigator.language || 'en-US' });
+    rec.onresult = e => {
+      let said = '';
+      for (const r of e.results) said += r[0].transcript;
+      said = said.trim();
+      ta.value = (base ? base + (base.endsWith('.') ? ' ' : '. ') : '') + (said ? said[0].toUpperCase() + said.slice(1) : '');
+      ta.scrollTop = ta.scrollHeight;
+    };
+    rec.onerror = e => { if (e.error === 'not-allowed') toast('Allow the microphone for Pulse, or use the 🎤 on your keyboard'); };
+    rec.onend = () => { if (rec) stop(); };
+    try { rec.start(); btn.classList.add('on'); s.$('#tl').textContent = 'Listening… tap to stop'; } catch { stop(); ta.focus(); }
+  }
+  s.on('click', '[data-x="talk"]', () => rec ? stop() : start());
+  s.on('click', '[data-x="save"]', () => { stop(); d.notes = ta.value.trim(); db.put('days', d); s.close(); toast('Saved'); });
+  s.on('click', '[data-x="close"]', stop);
+  if (talk) start(); else ta.focus();
 }
 
 // ---------- meal prep ----------
@@ -1214,7 +1254,7 @@ function screenMe() {
   return `${header('Me')}
   <div class="pad">
     <section class="card profile">
-      <div class="avatar ${p.number ? 'jersey' : ''}">${p.number ? esc(p.number) : esc(firstName()[0]?.toUpperCase() || '?')}</div>
+      <div class="avatar">${esc(firstName()[0]?.toUpperCase() || '?')}</div>
       <div class="grow"><input class="name-in" value="${esc(p.name || '')}" placeholder="Your name" data-change="name" aria-label="Your name">
       <div class="muted small">${cloud ? esc(cloud.email) : 'Saved on this phone'}</div></div>
     </section>
@@ -1303,6 +1343,7 @@ const acts = {
   gfSet: d => { saveProfile({ glutenFree: d.v === '1' }); if (d.v === '1') toast('Gluten warnings on'); },
   med: d => toggleMed(d.id),
   editMeds: () => openMeds(),
+  journalTalk: () => openJournal(ui.date, true),
   journal: () => openJournal(),
   healthSync: () => healthSync(),
   healthPaste: () => healthPaste(),
@@ -1323,7 +1364,8 @@ const changes = {
   goal: el => { const g = goals(); g[el.dataset.k] = num(el.value); saveProfile({ goals: g }); },
   name: el => saveProfile({ name: el.value.trim() }),
   sleepGoal: el => saveProfile({ sleepGoal: +el.value }),
-  medsTime: el => { if (el.value) saveProfile({ medsTime: el.value }); },
+  medsAm: el => saveProfile({ medsAm: el.value }),
+  medsPm: el => saveProfile({ medsPm: el.value }),
   restore: el => restoreBackup(el.files[0]),
 };
 const outsideSheet = el => !el.closest('.sheet-wrap');
