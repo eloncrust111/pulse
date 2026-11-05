@@ -716,3 +716,6 @@ textarea { resize: vertical; }
 .ob .field select { width: 100%; }
 .demo-tag.new { background: var(--good); border: 0; pointer-events: auto; font: inherit; font-size: 12px; font-weight: 700; color: #fff; }
 body.is-new .ob { padding-top: calc(max(env(safe-area-inset-top), 20px) + 40px); }
+.chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 10px; }
+.ob-lbl { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin: 14px 0 6px; }
+.ob .kv-row .time-in { min-width: 120px; }

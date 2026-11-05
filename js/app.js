@@ -62,6 +62,9 @@ const NEW = !DEMO && new URLSearchParams(location.search).has('new');
 
 const profile = () => db.get('settings', 'profile');
 const goals = () => ({ ...DEFAULT_GOALS, ...(profile()?.goals || {}) });
+// Calories, protein and water are always tracked; carbs, fat and fiber are optional.
+const OPTIONAL_MACROS = [['c', 'Carbs'], ['f', 'Fat'], ['fiber', 'Fiber']];
+const tracks = k => profile()?.track?.[k] ?? true;
 const firstName = () => (profile()?.name || '').trim().split(/\s+/)[0] || 'there';
 
 const ui = { tab: 'today', date: dateStr(), range: 30, foodQ: '', recipeQ: '', gutWindow: 12 };
@@ -317,10 +320,10 @@ function screenToday() {
         <div class="kv"><span>Eaten</span><b>${fmt(t.cal)}</b></div>
         <div class="kv"><span>Goal</span><b>${fmt(g.cal)}</b></div>
         ${day.burned ? `<div class="kv"><span>Burned</span><b>${fmt(day.burned)}</b></div>` : ''}
-        <div class="kv"><span>Fiber</span><b>${fmt(t.fiber)}<small>/${fmt(g.fiber)}g</small></b></div>
+        ${tracks('fiber') ? `<div class="kv"><span>Fiber</span><b>${fmt(t.fiber)}<small>/${fmt(g.fiber)}g</small></b></div>` : ''}
       </div>
     </div>
-    <div class="mbs">${macroBar('Protein', 'p', t.p, g.p)}${macroBar('Carbs', 'c', t.c, g.c)}${macroBar('Fat', 'f', t.f, g.f)}</div>
+    <div class="mbs">${macroBar('Protein', 'p', t.p, g.p)}${tracks('c') ? macroBar('Carbs', 'c', t.c, g.c) : ''}${tracks('f') ? macroBar('Fat', 'f', t.f, g.f) : ''}</div>
   </section>
   ${goalRings(d, day, t, g)}
   ${winCard(d)}
@@ -1056,7 +1059,8 @@ function askContext() {
   const meds = medList().map(m => `${m.name} (${medWhen(m).toLowerCase()}${medFood(m) ? ', with food' : ''})`).join('; ');
   lines.push(`Name: ${p.name || 'Carly'}. University of Portland women's basketball, #${p.number || '11'}. Celiac: strictly gluten-free.`);
   lines.push(`Today: ${parseDate(t).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}, ${fmtTime(timeStr())}.`);
-  lines.push(`Daily goals: ${g.cal} cal, ${g.p} g protein, ${g.c} g carbs, ${g.f} g fat, ${g.fiber} g fiber, ${g.water} oz water. Sleep goal ${fmtSleep(sleepGoal())}.`);
+  const opt = OPTIONAL_MACROS.filter(([k]) => tracks(k)).map(([k, l]) => `${g[k]} g ${l.toLowerCase()}`), off = OPTIONAL_MACROS.filter(([k]) => !tracks(k)).map(([, l]) => l.toLowerCase());
+  lines.push(`Daily goals: ${[`${g.cal} cal`, `${g.p} g protein`, ...opt, `${g.water} oz water`].join(', ')}. Sleep goal ${fmtSleep(sleepGoal())}.${p.goalsGuess ? " These goals are Pulse's generic starting point, NOT from her dietitian." : ''}${off.length ? ` She chose not to track ${off.join(' or ')}, so don't coach on those goals.` : ''}`);
   if (meds) lines.push(`Meds & vitamins: ${meds}.`);
   const tp = bedPlan(t); lines.push(`Tonight: sleep need ${fmtSleep(tp.need.min)}${tp.need.why.length ? ` (${tp.need.why.join(', ')})` : ''}, bed by ${fmtTime(tp.bed)}, up at ${fmtTime(tp.wake)}.`);
   const r = readiness(t); if (r) lines.push(`Readiness today: ${r.t} (${r.facts.join(', ')}).`);
@@ -1075,6 +1079,29 @@ function askContext() {
   if (ctx.size) lines.push(`What was going on during stomach episodes: ${[...ctx.entries()].sort((x, y) => y[1] - x[1]).map(([c, n]) => `${c} (${n})`).join(', ')}.`);
   if (gut.safe.length) lines.push(`Foods that seem fine: ${gut.safe.slice(0, 6).map(f => f.name).join(', ')}.`);
   const help = recoveryHelpers().list; if (help.length) lines.push(`What helps recovery: ${help.map(x => `${x.label} (${x.yes}% vs ${x.no}%)`).join('; ')}.`);
+  // Averages worked out here so the model doesn't do its own math. Only logged
+  // days count, and today is left out because it isn't over yet.
+  const avgs = (from, n) => {
+    const ds = Array.from({ length: n }, (_, i) => addDays(t, -(from + i))), out = [];
+    const eat = ds.map(d => dayEntries(d)).filter(e => e.length).map(e => sumMacros(e.map(x => x.macros)));
+    const avg = xs => xs.length ? xs.reduce((a, x) => a + x, 0) / xs.length : null;
+    const day = k => ds.map(d => db.get('days', d)?.[k]).filter(x => x != null);
+    // "vs goal" spelled out so under is never read as on track.
+    const vs = (v, goal, f) => { const pct = Math.round(v / goal * 100); return `${f(v)} vs goal ${f(goal)} (${pct}%, ${pct >= 95 ? 'on track' : pct >= 85 ? 'a bit under' : 'well under'})`; };
+    const gr = x => fmt(x) + ' g';
+    if (eat.length) {
+      out.push(`eaten per day (${eat.length} days logged): calories ${vs(avg(eat.map(m => m.cal)), g.cal, fmt)}, protein ${vs(avg(eat.map(m => m.p)), g.p, gr)}`
+        + OPTIONAL_MACROS.filter(([k]) => tracks(k)).map(([k, l]) => `, ${l.toLowerCase()} ${vs(avg(eat.map(m => m[k] || 0)), g[k], gr)}`).join(''));
+    }
+    const wv = day('water'); if (wv.length) out.push(`water ${vs(avg(wv), g.water, x => fmt(x) + ' oz')} (${wv.length} days)`);
+    const sv = day('sleepMin'); if (sv.length) out.push(`sleep ${vs(avg(sv), sleepGoal(), x => fmtSleep(Math.round(x)))} (${sv.length} nights)`);
+    [['recovery', '% recovery', fmt], ['burned', 'cal burned', fmt]].forEach(([k, l, f]) => {
+      const v = day(k); if (v.length) out.push(`${f(avg(v))}${l.startsWith('%') ? '' : ' '}${l} (${v.length} days)`);
+    });
+    return out.join(', ') || 'nothing logged';
+  };
+  lines.push(`Averages, last 7 days before today: ${avgs(1, 7)}.`, `Averages, the 7 days before that: ${avgs(8, 7)}.`);
+  lines.push(`Today so far is not a full day yet; don't treat today's totals as a finished day.`);
   lines.push('', 'Daily log, newest first (blank fields = not logged):');
   for (let i = 0; i < 35; i++) {
     const d = addDays(t, -i), day = db.get('days', d) || {}, ents = dayEntries(d);
@@ -1479,7 +1506,7 @@ function screenTrends() {
 
     <section class="card">
       <div class="card-head"><h3>Sleep</h3><span class="muted small">${sleepLogged.length ? 'avg ' + fmtSleep(sleepLogged.reduce((a, b) => a + b, 0) / sleepLogged.length * 60) : ''}</span></div>
-      ${barChart({ values: sleepVals, labels, dates, goal: 8, color: 'var(--lav)', fmtY: x => x + 'h' })}
+      ${barChart({ values: sleepVals, labels, dates, goal: sleepGoal() / 60, color: 'var(--lav)', fmtY: x => x + 'h' })}
     </section>
 
     <section class="card">
@@ -1662,9 +1689,10 @@ function screenMe() {
 
     <section class="card">
       <h3>Daily goals</h3>
-      <div class="grid2">${gi('cal', 'Calories', 'cal')}${gi('p', 'Protein', 'g')}${gi('c', 'Carbs', 'g')}${gi('f', 'Fat', 'g')}${gi('fiber', 'Fiber', 'g')}${gi('water', 'Water', 'oz')}</div>
-      <p class="muted tiny">Use targets from your dietitian or coach. Changes save automatically.</p>
-      <button class="btn soft full" data-act="calcMacros">Fill fat & carbs from my calories + protein</button>
+      <div class="grid2">${gi('cal', 'Calories', 'cal')}${gi('p', 'Protein', 'g')}${gi('water', 'Water', 'oz')}${OPTIONAL_MACROS.filter(([k]) => tracks(k)).map(([k, l]) => gi(k, l, 'g')).join('')}</div>
+      <div class="chip-row">${OPTIONAL_MACROS.map(([k, l]) => `<button class="chip ${tracks(k) ? 'on' : ''}" data-act="trackTog" data-k="${k}">${tracks(k) ? '✓ ' : '＋ '}${l}</button>`).join('')}</div>
+      <p class="muted tiny">${p.goalsGuess ? "These are Pulse's starting point. Swap in your dietitian's numbers when you have them." :'Use targets from your dietitian or coach. Changes save automatically.'}</p>
+      ${tracks('c') || tracks('f') ? `<button class="btn soft full" data-act="calcMacros">Fill fat & carbs from my calories + protein</button>` : ''}
     </section>
 
     <section class="card">
@@ -1738,6 +1766,7 @@ const acts = {
   healthPaste: () => healthPaste(),
   healthGuide: () => openHealthGuide(),
   toggle: d => saveProfile({ [d.k]: !(profile()?.[d.k] ?? d.def === '1') }),
+  trackTog: d => saveProfile({ track: { ...(profile()?.track || {}), [d.k]: !tracks(d.k) } }),
   period: d => setPeriod(d.f),
   periodFeel: d => togglePeriodFeel(d.k),
   winDone: d => { try { localStorage.setItem('pulseWinSeen', JSON.stringify([...winSeen(), d.d])); } catch {} queueRender(); },
@@ -1755,7 +1784,7 @@ const inputs = {
 };
 const changes = {
   pickDate: el => { if (el.value) { ui.date = el.value; render(); } },
-  goal: el => { const g = goals(); g[el.dataset.k] = num(el.value); saveProfile({ goals: g }); },
+  goal: el => { const g = goals(); g[el.dataset.k] = num(el.value); saveProfile({ goals: g, goalsGuess: false }); },
   name: el => saveProfile({ name: el.value.trim() }),
   sleepGoal: el => saveProfile({ sleepGoal: +el.value }),
   medsAm: el => saveProfile({ medsAm: el.value }),
@@ -2702,7 +2731,14 @@ function fullscreen(html) {
 const needsSetup = () => !profile() || profile().setupDone === false;
 function showWelcome() {
   const p0 = profile() || {};
-  let i = p0.setupStep || 0;
+  let i = p0.setupStep || 0, perDay = new Set([1, 2, 3, 4, 5].map(d => p0.wakeByDay?.[d])).size > 1;
+  // Wake times as shown on the sleep step: one per day, or weekdays + weekends.
+  const readWake = () => {
+    const w = { ...(profile()?.wakeByDay || {}) };
+    if ($('[data-wd]')) $$('[data-wd]').forEach(x => { if (x.value) w[x.dataset.wd] = x.value; });
+    else { const wd = $('#obWd')?.value || '06:00', we = $('#obWe')?.value || '07:00'; [1, 2, 3, 4, 5].forEach(d => { w[d] = wd; }); w[0] = w[6] = we; }
+    return w;
+  };
   const tog = (k, on, label, sub) => `<button type="button" class="ob-tog ${on ? 'on' : ''}" data-tog="${k}"><span class="grow"><b>${label}</b><small>${sub}</small></span><span class="sw"><i></i></span></button>`;
   const opt = (k, v, cur, e, label, sub) => `<button type="button" class="ob-opt ${cur === v ? 'on' : ''}" data-opt="${k}" data-v="${v}"><span class="ob-opt-e">${e}</span><span class="grow"><b>${label}</b><small>${sub}</small></span><span class="ob-radio"></span></button>`;
   const STEPS = [
@@ -2715,18 +2751,28 @@ function showWelcome() {
       save: () => { const n = $('#obName')?.value.trim(); if (!OWNER && !n) return toast('Type your name first'), false;
         saveProfile({ setupDone: false, name: OWNER?.name || n, number: OWNER?.number || '', glutenFree: OWNER?.glutenFree || !!profile()?.glutenFree, goals: profile()?.goals || { ...DEFAULT_GOALS } }); } },
     { k: 'goals', e: '🎯', t: 'Daily goals',
-      b: () => { const g = goals(); const f = (k, l, u) => `<div class="field"><label>${l}</label><div class="unit-in"><input data-g="${k}" inputmode="decimal" value="${g[k]}"><span>${u}</span></div></div>`;
-        return `<p class="ob-sub">Use your dietitian's numbers. Not sure? These are a solid start.</p>
-          <div class="grid2">${f('cal', 'Calories', 'cal')}${f('p', 'Protein', 'g')}${f('c', 'Carbs', 'g')}${f('f', 'Fat', 'g')}${f('water', 'Water', 'oz')}${f('fiber', 'Fiber', 'g')}</div>`; },
-      save: () => { const g = { ...goals() }; $$('[data-g]').forEach(x => { if (x.value.trim()) g[x.dataset.g] = num(x.value); }); saveProfile({ goals: g }); } },
+      b: () => { const p = profile() || {}, g = goals(), f = (k, l, u) => `<div class="field"><label>${l}</label><div class="unit-in"><input data-g="${k}" inputmode="decimal" value="${g[k]}"><span>${u}</span></div></div>`;
+        const tr = k => p.track?.[k] ?? false, src = p.goalsFrom || 'guess';
+        return `<p class="ob-sub">Calories, protein and water are the basics. Where do your numbers come from?</p>
+          ${opt('goalsFrom', 'guess', src, '🤷‍♀️', 'Not sure yet', "Start with Pulse's numbers, change them anytime")}
+          ${opt('goalsFrom', 'mine', src, '📋', 'I have my numbers', 'From my dietitian or coach')}
+          <div class="grid2 mt">${f('cal', 'Calories', 'cal')}${f('p', 'Protein', 'g')}${f('water', 'Water', 'oz')}${OPTIONAL_MACROS.filter(([k]) => tr(k)).map(([k, l]) => f(k, l, 'g')).join('')}</div>
+          <label class="ob-lbl">Also track <span class="muted">(optional)</span></label>
+          <div class="chip-row">${OPTIONAL_MACROS.map(([k, l]) => `<button type="button" class="chip sm ${tr(k) ? 'on' : ''}" data-o="track" data-k="${k}">${tr(k) ? '✓ ' : '＋ '}${l}</button>`).join('')}</div>
+          ${src === 'guess' ? `<p class="muted tiny">A starting point for a college athlete. Every body is different, so check with your dietitian when you can.</p>` : ''}`; },
+      save: () => { const g = { ...goals() }; $$('[data-g]').forEach(x => { if (x.value.trim()) g[x.dataset.g] = num(x.value); });
+        const typed = $$('[data-g]').some(x => num(x.value) !== DEFAULT_GOALS[x.dataset.g]);
+        const track = { c: false, f: false, fiber: false, ...(profile()?.track || {}) };
+        saveProfile({ goals: g, track, goalsGuess: (profile()?.goalsFrom || 'guess') === 'guess' && !typed }); } },
     { k: 'sleep', e: '😴', t: 'Sleep',
       b: () => `<p class="ob-sub">Pulse plans your bedtime every night from these. Game nights move it automatically.</p>
         <div class="field"><label>How much sleep do you want?</label><select id="obSleep">${[420, 450, 480, 510, 540, 570, 600].map(m => `<option value="${m}" ${m === sleepGoal() ? 'selected' : ''}>${fmtSleep(m)}</option>`).join('')}</select></div>
-        <div class="grid2"><div class="field"><label>Weekdays I wake up</label><input type="time" id="obWd" value="${wakeUsual(1)}"></div>
-        <div class="field"><label>Weekends I wake up</label><input type="time" id="obWe" value="${wakeUsual(6)}"></div></div>
-        <p class="muted tiny">Different on some days? Change single days later from the Sleep card.</p>`,
-      save: () => { const wd = $('#obWd').value || '06:00', we = $('#obWe').value || '07:00', w = { ...(profile()?.wakeByDay || {}) };
-        [1, 2, 3, 4, 5].forEach(d => { w[d] = wd; }); w[0] = w[6] = we; saveProfile({ sleepGoal: +$('#obSleep').value, wakeByDay: w }); } },
+        ${perDay ? `<label class="ob-lbl">I usually wake up</label>${[1, 2, 3, 4, 5, 6, 0].map(d => `<div class="kv-row"><span>${WEEKDAYS[d]}</span><input type="time" class="time-in" data-wd="${d}" value="${wakeUsual(d)}"></div>`).join('')}`
+          : `<div class="grid2"><div class="field"><label>Weekdays I wake up</label><input type="time" id="obWd" value="${wakeUsual(1)}"></div>
+          <div class="field"><label>Weekends I wake up</label><input type="time" id="obWe" value="${wakeUsual(6)}"></div></div>`}
+        <button type="button" class="link-btn" data-o="perDay">${perDay ? 'Same time every weekday' : 'Different each day? Set each one'}</button>
+        <p class="muted tiny">Something comes up? Change any single night from the Sleep card.</p>`,
+      save: () => { saveProfile({ sleepGoal: +$('#obSleep').value, wakeByDay: readWake() }); } },
     { k: 'meds', e: '💊', t: 'Meds & vitamins',
       b: () => { const m = medList(); return `<p class="ob-sub">Check them off each day. Pulse only reminds you if you forget.</p>
         ${m.length ? `<div class="ob-meds">${m.map(x => `<span>${medWhen(x) === 'Night' ? '🌙' : medWhen(x) === 'Morning' ? '☀️' : '🕒'} ${esc(x.name)}${medFood(x) ? ' 🍽️' : ''}</span>`).join('')}</div>` : ''}
@@ -2744,8 +2790,7 @@ function showWelcome() {
         ${tog('showPeriod', p.showPeriod ?? true, '🌸 Period tracking', 'A small row at the bottom of Today')}
         ${tog('showWeight', !!p.showWeight, '⚖️ Body weight', 'A weight card with a 7-day average')}`; } },
     { k: 'notify', e: '🔔', t: 'Reminders',
-      b: () => `<p class="ob-sub">Only the useful ones, never spammy:</p>
-        <div class="ob-list col"><span>🌙 30 min before your bedtime</span><span>💊 Meds, only if not checked off</span><span>🏀 Game day</span><span>🏆 When the Pilots win</span></div>
+      b: () => `<p class="ob-sub">Just a few, at the right moments. Never spammy.</p>
         ${ui.notifyOn ? `<p class="ob-ok">✅ Reminders are on</p>`
           : !notify.installed() && !NEW ? `<div class="ob-install"><b>First, add Pulse to your Home Screen:</b><ol><li>Tap <b>Share</b> <span class="muted">(square with arrow)</span></li><li>Tap <b>Add to Home Screen</b></li><li>Open Pulse from your Home Screen</li></ol></div>`
           : `<button type="button" class="btn primary full big" data-o="notify">🔔 Turn on reminders</button>`}`,
@@ -2753,7 +2798,7 @@ function showWelcome() {
     { k: 'done', e: '🎉', t: 'You\'re all set!',
       b: () => { const p = profile() || {}, g = goals(), m = medList();
         return `<div class="ob-sum">
-          <span>🎯 ${fmt(g.cal)} cal · ${fmt(g.p)}g protein</span>
+          <span>🎯 ${fmt(g.cal)} cal · ${fmt(g.p)}g protein · ${fmt(g.water)} oz water</span>
           <span>😴 ${fmtSleep(sleepGoal())} of sleep, bed by ${fmtTime(bedGoal())} tonight</span>
           <span>💊 ${m.length ? plural(m.length, 'med') : 'No meds yet'}</span>
           <span>⌚ ${p.burnFrom === 'health' ? 'Apple Health (setting up next)' : 'Typing it in'}</span>
@@ -2773,11 +2818,16 @@ function showWelcome() {
     const t = e.target.closest('[data-o],[data-tog],[data-opt]');
     if (!t || !main.querySelector('.ob')) return;
     if (t.dataset.tog) { const k = t.dataset.tog, on = !t.classList.contains('on'); t.classList.toggle('on', on); return saveProfile({ [k]: on }); }
-    if (t.dataset.opt) { $$(`[data-opt="${t.dataset.opt}"]`).forEach(b => b.classList.toggle('on', b === t)); return saveProfile({ [t.dataset.opt]: t.dataset.v }); }
+    if (t.dataset.opt) { $$(`[data-opt="${t.dataset.opt}"]`).forEach(b => b.classList.toggle('on', b === t));
+      if (t.dataset.opt !== 'goalsFrom') return saveProfile({ [t.dataset.opt]: t.dataset.v });
+      STEPS[i].save(); saveProfile({ goalsFrom: t.dataset.v }); draw();
+      if (t.dataset.v === 'mine') $('[data-g="cal"]')?.focus(); return; }
     const o = t.dataset.o;
     if (o === 'back') { i--; saveProfile({ setupStep: i }); return draw(); }
     if (o === 'meds') { const s = openMeds(); const was = s?.onClose; if (s) s.onClose = () => { was?.(); draw(); }; return; }
     if (o === 'notify') { await turnOnNotify(); return draw(); }
+    if (o === 'perDay') { saveProfile({ wakeByDay: readWake() }); perDay = !perDay; return draw(); }
+    if (o === 'track') { STEPS[i].save(); const tr = profile()?.track || {}; saveProfile({ track: { ...tr, [t.dataset.k]: !(tr[t.dataset.k] ?? false) } }); return draw(); }
     if (o !== 'next') return;
     if (STEPS[i].save?.() === false) return;
     if (i < STEPS.length - 1) { i++; saveProfile({ setupStep: i }); return draw(); }
