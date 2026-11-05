@@ -18,6 +18,8 @@ export default {
     const url = new URL(req.url);
     if (url.pathname === '/results') return json(JSON.parse(await env.SUBS.get('results') || '{}'));
     if (url.pathname === '/ask' && req.method === 'POST') return ask(req, env);
+    if (url.pathname === '/photo' && req.method === 'POST') return photo(req, env);
+    if (url.pathname === '/ideas' && req.method === 'POST') return ideas(req, env);
     if (url.pathname !== '/sub') return json({ ok: true, name: 'pulse-push' });
     let body;
     try { body = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
@@ -194,6 +196,59 @@ async function ask(req, env) {
   try {
     const r = await env.AI.run(MODEL, { messages: [{ role: 'system', content: SYSTEM + context }, ...messages], max_tokens: 800, temperature: 0.2 });
     return json({ answer: String(r?.response || '').trim() });
+  } catch (e) {
+    return json({ error: 'busy', detail: String(e?.message || e).slice(0, 200) }, 503);
+  }
+}
+
+// ---------- Meal photo estimate ----------
+// A rough guess from a picture. The app shows it as editable and says it can be off.
+const VISION = '@cf/meta/llama-4-scout-17b-16e-instruct';
+const PHOTO_PROMPT = `You estimate nutrition from a photo of a meal for a college athlete with celiac disease.
+List each separate food you can see. For each, estimate a realistic portion from the plate size and food size, then its calories and macros for THAT portion, using standard USDA-style values.
+Be conservative and honest: if you can't tell what something is, say so in the name (e.g. "sauce (unclear)"). Don't invent foods you can't see.
+gluten: "likely" if the food usually contains wheat, barley or rye (bread, pasta, breading, flour tortilla, soy sauce, beer batter), "check" if it might (sauces, gravies, fried foods, granola, oats, anything from a restaurant), "safe" only if it is naturally gluten-free and plain (plain meat, rice, potato, fruit, vegetables, eggs).
+Reply with ONLY JSON, no other text:
+{"items":[{"name":"grilled chicken breast","portion":"about 5 oz","cal":230,"p":43,"c":0,"f":5,"fiber":0,"gluten":"safe"}],"confidence":"low|medium|high","note":"one short sentence on what was hard to judge"}`;
+async function photo(req, env) {
+  let b;
+  try { b = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
+  const img = String(b.image || '');
+  if (!img.startsWith('data:image/') || img.length > 2_000_000) return json({ error: 'bad image' }, 400);
+  try {
+    const r = await env.AI.run(VISION, { messages: [{ role: 'user', content: [{ type: 'text', text: PHOTO_PROMPT + (b.hint ? `\nShe says it is: ${String(b.hint).slice(0, 200)}` : '') }, { type: 'image_url', image_url: { url: img } }] }], max_tokens: 900, temperature: 0.1 });
+    let out = parseJSON(r?.response);
+    if (Array.isArray(out)) out = { items: out };
+    if (!out?.items?.length) return json({ error: 'unclear' }, 422);
+    const n = v => Math.max(0, Math.round(+v || 0));
+    return json({
+      items: out.items.slice(0, 12).map(x => ({ name: String(x.name || 'Food').slice(0, 60), portion: String(x.portion || '').slice(0, 40), cal: n(x.cal), p: n(x.p), c: n(x.c), f: n(x.f), fiber: n(x.fiber), gluten: ['likely', 'check', 'safe'].includes(x.gluten) ? x.gluten : 'check' })),
+      confidence: ['low', 'medium', 'high'].includes(out.confidence) ? out.confidence : 'low', note: String(out.note || '').slice(0, 200),
+    });
+  } catch (e) {
+    return json({ error: 'busy', detail: String(e?.message || e).slice(0, 200) }, 503);
+  }
+}
+// Models sometimes wrap JSON in prose or code fences, or return it already parsed.
+function parseJSON(t) {
+  if (t && typeof t === 'object') return t;
+  const m = String(t || '').match(/[[{][\s\S]*[\]}]/);
+  try { return m ? JSON.parse(m[0]) : null; } catch { return null; }
+}
+
+// ---------- Meal prep ideas ----------
+// Names of dishes to look up online, based on what she already makes. No recipes are written here.
+async function ideas(req, env) {
+  let b;
+  try { b = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
+  const prompt = `A college basketball player with celiac disease meal preps on Sundays. Things she already makes or eats a lot: ${String(b.likes || 'nothing logged yet').slice(0, 1500)}.
+Suggest 4 meal-prep dishes she'd probably like next: some close to what she already makes, one a little new. Lunches or dinners only. Each must be easy to make naturally gluten-free, keep in the fridge for 4 days, and be high in protein with good carbs for training.
+Reply with ONLY JSON: {"ideas":[{"name":"short dish name a recipe site would use","why":"one short sentence tying it to what she makes"}]}`;
+  try {
+    const r = await env.AI.run(MODEL, { messages: [{ role: 'user', content: prompt }], max_tokens: 500, temperature: 0.7 });
+    const out = parseJSON(r?.response);
+    if (!out?.ideas?.length) return json({ error: 'unclear' }, 422);
+    return json({ ideas: out.ideas.slice(0, 4).map(x => ({ name: String(x.name || '').slice(0, 60), why: String(x.why || '').slice(0, 140) })).filter(x => x.name) });
   } catch (e) {
     return json({ error: 'busy', detail: String(e?.message || e).slice(0, 200) }, 503);
   }

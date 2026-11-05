@@ -384,7 +384,7 @@ function checkRings() {
   celebrate(all ? '🔥 All rings closed today!' : fresh[0].win, all);
 }
 function celebrate(msg, big = false) {
-  toast(msg);
+  if (msg) toast(msg);
   buzz();
   const cv = document.createElement('canvas');
   cv.className = 'confetti';
@@ -443,6 +443,7 @@ function recentWin(date) {
 function winCard(date) {
   const g = recentWin(date);
   if (!g) return '';
+  if (ui.winParty !== g.date) { ui.winParty = g.date; setTimeout(() => celebrate('Pilots win! 🏆', true), 500); }
   return `<section class="card win-card"><button class="pr-x" data-act="winDone" data-d="${g.date}" aria-label="Close">✕</button>
     <div class="win-big">🏆</div><div class="win-t">Pilots win!</div>
     <div class="win-s">${vsAt(g)} ${esc(g.opp)} · ${esc(g.result)}</div>
@@ -452,18 +453,49 @@ function winCard(date) {
 // ---------- games & training days ----------
 const gameTime = g => g.time ? fmtTime(g.time) : 'Time TBA';
 const vsAt = g => g.home ? 'vs' : '@';
+// Game-day fuel plan, timed back from tip-off. Standard sports-dietitian timing:
+// a carb-heavy, low-fat meal 3-4 h out, a small carb snack about an hour out,
+// fluids through the afternoon, then carbs + protein within an hour after.
+// Plain minutes since midnight (toMin is shifted for bedtimes, so not used here).
+const dayMin = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
+const dayClock = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+function gamePlan(date, g) {
+  const tip = dayMin(g.time), now = date === dateStr() ? dayMin(timeStr()) : -1;
+  const steps = [
+    [tip - 240, tip - 180, '🍝', 'Game meal', 'Mostly carbs + lean protein, easy on fat and fiber. GF pasta or rice with chicken is perfect.'],
+    [tip - 180, tip - 30, '💧', 'Sip water', 'About 2–3 cups spread over the next couple of hours.'],
+    [tip - 75, tip - 30, '🍌', 'Small snack', 'Quick carbs: a banana, GF pretzels or applesauce.'],
+    [tip, tip + 120, '🏀', 'Tip-off', 'Go get it.'],
+    [tip + 120, tip + 180, '🥛', 'Refuel', 'Within an hour: carbs + 20–30 g protein, like chocolate milk or a GF wrap.'],
+  ];
+  const cur = steps.findIndex(([a, b]) => now >= a && now < b);
+  return `<div class="gp">${steps.map(([a, b, e, t, sub], i) => {
+    const st = now < 0 ? '' : now >= b ? 'done' : i === cur ? 'now' : '';
+    return `<div class="gp-row ${st}"><span class="gp-t">${fmtTime(dayClock(Math.max(0, a)))}</span><span class="gp-e">${st === 'done' ? '✓' : e}</span><div class="grow"><b>${t}</b>${st === 'now' ? '<span class="gp-now">Now</span>' : ''}<div class="gp-s">${sub}</div></div></div>`;
+  }).join('')}</div>`;
+}
+function tipIn(g) {
+  const m = dayMin(g.time) - dayMin(timeStr());
+  return m > 0 ? `Tip-off in ${m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m} min`}` : m > -120 ? 'Game on 🔥' : '';
+}
 function gameBanner(date) {
   const g = gameOn(date);
-  if (g) return `<section class="game-banner">
+  if (g) {
+    const plan = !g.result && g.time && date >= dateStr();
+    if (plan && date === dateStr() && !ui.gameSeen) { ui.gameSeen = true; setTimeout(() => celebrate(`Game day 🏀 ${vsAt(g)} ${g.opp}`), 600); }
+    return `<section class="game-banner ${plan ? 'gd' : ''}"><div class="gb-head">
     <img class="team-logo" src="${teamLogo(g)}" alt="">
-    <div class="grow"><div class="gb-k">🏀 Game day</div><div class="gb-t">${vsAt(g)} ${esc(g.opp)}</div>
-    <div class="gb-s">${g.result ? esc(g.result) : gameTime(g)} · ${esc(g.venue || g.where)}</div></div></section>`;
+    <div class="grow"><div class="gb-k">🏀 Game day${plan && date === dateStr() && tipIn(g) ? ` · ${tipIn(g)}` : ''}</div><div class="gb-t">${vsAt(g)} ${esc(g.opp)}</div>
+    <div class="gb-s">${g.result ? esc(g.result) : gameTime(g)} · ${esc(g.venue || g.where)}</div></div></div>
+    ${plan ? gamePlan(date, g) : ''}</section>`;
+  }
   const n = nextGame(addDays(date, 1));
   if (!n || date < dateStr()) return '';
   const days = Math.round((parseDate(n.date) - parseDate(date)) / 864e5);
   if (days > 6) return '';
   return `<button class="next-game" data-act="calendar"><img class="team-logo sm" src="${teamLogo(n)}" alt="">
-    <span class="grow">Next game <b>${days === 1 ? 'tomorrow' : parseDate(n.date).toLocaleDateString(undefined, { weekday: 'long' })}</b> ${vsAt(n)} ${esc(n.opp)}</span><span class="muted">${gameTime(n)}</span></button>`;
+    <span class="grow">Next game <b>${days === 1 ? 'tomorrow' : parseDate(n.date).toLocaleDateString(undefined, { weekday: 'long' })}</b> ${vsAt(n)} ${esc(n.opp)}
+    ${days === 1 && date === dateStr() ? `<div class="muted tiny">Tonight: a carb-rich dinner and bed by ${fmtTime(bedGoal(date))}</div>` : ''}</span><span class="muted">${gameTime(n)}</span></button>`;
 }
 function activityRow(date, day) {
   const on = new Set(actsOf(day)), today = date === dateStr();
@@ -1008,8 +1040,57 @@ function weekCard(date) {
       ${good[0] ? `<div class="fact"><span>✅</span><div><b>Went well:</b> ${good[0]}</div></div>` : ''}
       ${tryNext[0] ? `<div class="fact"><span>🎯</span><div><b>Try this week:</b> ${tryNext[0]}</div></div>` : ''}
     </div>
-    <button class="btn soft full" data-act="ask" data-q="How did my week go? What should I focus on this week?">✨ Ask Pulse about my week</button>
+    <button class="btn primary full" data-act="wrapped" data-from="${range[0]}" data-to="${range[1]}">▶ Watch your week</button>
+    <button class="btn soft full mt" data-act="ask" data-q="How did my week go? What should I focus on this week?">✨ Ask Pulse about my week</button>
   </section>`;
+}
+
+// Weekly "Wrapped": a tap-through story of the week. Slides with no data are skipped.
+function openWrapped(from, to) {
+  const w = weekStats([from, to]), g = goals(), dates = [];
+  for (let d = from; d <= to; d = addDays(d, 1)) dates.push(d);
+  const days = dates.map(d => ({ ...(db.get('days', d) || {}), date: d }));
+  const wd = d => parseDate(d).toLocaleDateString(undefined, { weekday: 'long' });
+  const best = (k, hi = true) => days.filter(d => d[k] != null).sort((a, b) => hi ? b[k] - a[k] : a[k] - b[k])[0];
+  const counts = new Map();
+  db.list('entries').forEach(e => { if (e.date >= from && e.date <= to && e.kind !== 'quick') counts.set(e.name, (counts.get(e.name) || 0) + 1); });
+  const fav = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
+  const short = d => parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const slides = [];
+  slides.push({ c: 'w1', k: 'Your week', big: `${esc(firstName())} 💜`, sub: `${short(from)} – ${short(to)}`, foot: 'Tap to keep going' });
+  if (w.sleepN) { const b = best('sleepMin');
+    slides.push({ c: 'w2', k: '😴 Sleep', big: fmtSleep(w.sleep), sub: 'average a night', foot: `Best night: <b>${fmtSleep(b.sleepMin)}</b> on ${wd(addDays(b.date, -1))} night${w.bedN ? `<br>On your bedtime plan <b>${w.nearBed} of ${w.bedN}</b> nights` : ''}` }); }
+  if (w.foodDays) slides.push({ c: 'w3', k: '🥩 Protein', big: `${w.protein}/${w.foodDays}`, sub: 'days you hit your protein goal', foot: `${fmt(w.cal)} cal a day on average${w.water ? `<br>💧 Water goal hit <b>${w.water}</b> ${w.water === 1 ? 'day' : 'days'}` : ''}` });
+  if (fav && fav[1] >= 2) slides.push({ c: 'w4', k: '🍽️ Your go-to', big: esc(fav[0]), sub: `${fav[1]} times this week`, foot: 'Certified comfort food.' });
+  if (w.train || w.games.length) slides.push({ c: 'w5', k: '💪 The grind', big: String(w.train), sub: `training session${w.train === 1 ? '' : 's'}`, foot: w.games.length ? w.games.map(x => `🏀 ${esc(x)}`).join('<br>') : 'Every rep counts.' });
+  const br = best('recovery');
+  if (br) slides.push({ c: 'w6', k: '💚 Recovery', big: `${br.recovery}%`, sub: `your best, on ${wd(br.date)}`, foot: w.rec != null ? `${Math.round(w.rec)}% average` : '' });
+  const wins = [w.bedN && w.nearBed >= w.bedN - 1 && 'Sleep schedule on lock', w.foodDays && w.protein >= w.foodDays - 1 && 'Protein every day', !w.stomach && w.foodDays >= 4 && 'Zero stomach trouble', w.water >= 5 && 'Hydrated all week'].filter(Boolean);
+  slides.push({ c: 'w7', k: wins.length ? '🏆 Week in one line' : '🎯 Next week', big: wins.length ? wins[0] : 'Fresh start', sub: wins.length ? wins.slice(1).join(' · ') : "New week. Let's get it.", foot: `#${esc(profile()?.number || '11')} · Pulse` });
+
+  const el = document.createElement('div');
+  el.className = 'wrapped';
+  document.body.appendChild(el);
+  let i = 0, timer;
+  const close = () => { clearTimeout(timer); el.remove(); };
+  const show = () => {
+    clearTimeout(timer);
+    const x = slides[i];
+    el.className = `wrapped ${x.c}`;
+    el.innerHTML = `<div class="wr-bars">${slides.map((_, j) => `<i class="${j < i ? 'done' : j === i ? 'on' : ''}"></i>`).join('')}</div>
+      <button class="wr-x" aria-label="Close">✕</button>
+      <div class="wr-body"><div class="wr-k">${x.k}</div><div class="wr-big">${x.big}</div><div class="wr-sub">${x.sub}</div><div class="wr-foot">${x.foot}</div></div>
+      ${i === slides.length - 1 ? `<div class="wr-end">📸 Screenshot to share</div>` : ''}`;
+    if (i === slides.length - 1) celebrate('', true); else timer = setTimeout(() => { i++; show(); }, 5000);
+  };
+  el.addEventListener('click', e => {
+    if (e.target.closest('.wr-x')) return close();
+    if (e.clientX < innerWidth / 3) i = Math.max(0, i - 1);
+    else if (i < slides.length - 1) i++;
+    else return close();
+    buzz(); show();
+  });
+  show();
 }
 
 // ---------- what helps her recover (like Whoop's journal insights) ----------
@@ -1428,7 +1509,37 @@ function screenRecipes() {
       : db.list('recipes').length ? `<div class="prep-hint">🥡 <div><b>Meal prepping?</b> Open a recipe and tap <b>I meal-prepped this</b>. Pulse splits the batch into containers so each one is a single tap to log.</div></div>` : ''}
     ${db.list('recipes').length ? `<div class="search"><input type="search" placeholder="Search recipes" value="${esc(ui.recipeQ)}" data-input="recipeQ"></div>` : ''}
     <div class="list" id="recipeList">${recipeListHTML()}</div>
+    ${ideasCard()}
   </div>`;
+}
+
+// Meal prep ideas: AI picks dish names from what she already makes, and each
+// one links to real recipes online. Pulse never writes the recipe itself.
+function ideasCard() {
+  const st = ui.ideas;
+  return `<section class="card ideas-card"><div class="card-head"><h3>💡 Meal prep inspo</h3>${st?.list ? `<button class="link" data-act="getIdeas">New ideas</button>` : ''}</div>
+    ${!st ? `<p class="muted small">Ideas picked from what you already make and eat, with real recipes to find online.</p><button class="btn soft full" data-act="getIdeas">✨ Give me ideas</button>`
+      : st.loading ? `<div class="snap-wait"><span class="spin"></span> Thinking about what you'd like…</div>`
+      : st.error ? `<p class="muted small">${st.error}</p><button class="btn soft full" data-act="getIdeas">Try again</button>`
+      : st.list.map(x => `<a class="idea" href="https://www.google.com/search?q=${encodeURIComponent(`${x.name} gluten free meal prep recipe`)}" target="_blank" rel="noopener">
+          <div class="grow"><b>${esc(x.name)}</b><div class="muted tiny">${esc(x.why)}</div></div><span class="idea-go">Find recipe ↗</span></a>`).join('')
+        + `<p class="muted tiny">Opens recipes online. Double-check every ingredient is gluten-free (sauces, broth, seasoning mixes).</p>`}
+  </section>`;
+}
+async function getIdeas() {
+  const names = new Map();
+  const bump = (n, w) => n && names.set(n, (names.get(n) || 0) + w);
+  db.list('recipes').forEach(r => bump(r.name, 3));
+  db.list('preps').forEach(p => bump(p.name, 4));
+  db.list('entries').filter(e => e.date >= addDays(dateStr(), -30) && e.kind !== 'quick').forEach(e => bump(e.name, 1));
+  const likes = [...names.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([n]) => n).join(', ');
+  ui.ideas = { loading: true }; queueRender();
+  try {
+    const r = await fetch(CONFIG_PUSH() + '/ideas', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ likes }) });
+    const j = await r.json();
+    ui.ideas = r.ok && j.ideas?.length ? { list: j.ideas } : { error: 'Pulse is busy right now. Try again in a minute.' };
+  } catch { ui.ideas = { error: "Can't reach Pulse. Check your connection." }; }
+  queueRender();
 }
 
 // ===== TRENDS =====
@@ -1471,6 +1582,7 @@ function screenTrends() {
   return `${header('Trends', streak() ? `🔥 ${streak()}-day logging streak` : '', `<button class="top-btn" data-act="calendar">${icon('calendar')} Calendar</button>`)}
   <div class="pad">
     ${askBar()}
+    <button class="wrapped-btn" data-act="wrapped"><span>▶</span><span class="grow"><b>Your last 7 days, Wrapped</b><small>Tap through your week</small></span></button>
     <div class="seg range">${[7, 30, 90].map(r => `<button class="${ui.range === r ? 'on' : ''}" data-act="range" data-r="${r}">${r === 7 ? 'Week' : r === 30 ? 'Month' : '3 months'}</button>`).join('')}</div>
 
     <section class="card">
@@ -1776,6 +1888,8 @@ const acts = {
   logWeight: () => openWeight(),
   ask: d => openAsk(d.q || ''),
   weekDone: d => saveProfile({ ['weekSeen-' + d.d]: true }),
+  getIdeas: () => getIdeas(),
+  wrapped: d => openWrapped(d.from || addDays(dateStr(), -7), d.to || addDays(dateStr(), -1)),
   jump: d => { const el = $('.card.' + d.to); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } },
 };
 const inputs = {
@@ -1881,7 +1995,7 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
         <button class="tool" data-x="new"><span>📷</span>New food</button>
         <button class="tool" data-x="scan"><span>▦</span>Scan</button>
         <button class="tool" data-x="online"><span>🔎</span>Online</button>
-        ${mode === 'log' ? `<button class="tool" data-x="quick"><span>⚡</span>Quick add</button>` : ''}
+        ${mode === 'log' ? `<label class="tool"><span>🍽️</span>Snap meal<input type="file" accept="image/*" capture="environment" hidden data-x="snapIn"></label><button class="tool" data-x="quick"><span>⚡</span>Quick add</button>` : ''}
       </div>
       <div class="seg" id="ptabs"></div>
       <div class="list" id="plist"></div>`,
@@ -1933,6 +2047,7 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
   s.on('click', '[data-x="scan"]', () => scanFlow({ onFood: f => picked('food', f) }));
   s.on('click', '[data-x="online"]', () => openOnline({ q, onSaved: f => picked('food', f) }));
   s.on('click', '[data-x="quick"]', () => openQuick({ meal, date }));
+  s.on('change', '[data-x="snapIn"]', el => { const f = el.files[0]; el.value = ''; if (f) snapMeal(f, { meal, date, onAdded: cal => { added++; addedCal += cal; s.$('#addedTxt').innerHTML = `<b>✓ ${added} added</b> · ${fmt(addedCal)} cal`; } }); });
   draw();
 }
 
@@ -2036,6 +2151,57 @@ function openQuick({ entry = null, meal = defaultMeal(), date = ui.date }) {
     s.close();
     toast(entry ? 'Saved' : `Added · ${fmt(cal)} cal`);
   });
+}
+
+// ---------- meal photo ----------
+// AI looks at a photo and guesses each food and portion. It's a rough guess
+// (portions are hard to judge from a picture), so she reviews every number first.
+const GLUTEN_TXT = { likely: '⚠️ Usually has gluten', check: '❓ Check for gluten', safe: '' };
+async function snapMeal(file, { meal, date, onAdded }) {
+  let photo;
+  try { photo = await fileToDataURL(file, 768, 0.7); } catch (e) { return toast(e.message); }
+  let items = [], conf = 'low', note = '', curMeal = meal;
+  const s = openSheet({
+    title: '🍽️ Snap meal', full: true,
+    body: `<img class="snap-img" src="${photo}" alt="">
+      <div class="snap-warn"><b>📏 Rough estimate</b> AI guesses portions from a photo and can be off by a lot, sometimes 30% or more. Fix any amount that looks wrong before adding.</div>
+      <div id="snapOut"><div class="snap-wait"><span class="spin"></span> Looking at your plate…</div></div>`,
+    footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="add" disabled>Add</button>`,
+  });
+  const total = () => items.reduce((a, x) => a + (x.on ? x.cal : 0), 0);
+  const draw = () => {
+    if (!items.length) return;
+    s.$('#snapOut').innerHTML = `${conf === 'low' || note ? `<p class="muted small">${conf === 'low' ? 'Hard to tell from this photo. ' : ''}${esc(note)}</p>` : ''}
+      ${items.map((x, i) => `<div class="snap-item ${x.on ? '' : 'off'}">
+        <div class="snap-top"><button class="snap-tick" data-x="tick" data-i="${i}" aria-label="Include">${x.on ? '✓' : ''}</button>
+          <input class="snap-name" data-i="${i}" data-f="name" value="${esc(x.name)}"><span class="muted tiny">${esc(x.portion)}</span></div>
+        ${gfOn() && GLUTEN_TXT[x.gluten] ? `<div class="snap-gf ${x.gluten}">${GLUTEN_TXT[x.gluten]}</div>` : ''}
+        <div class="snap-macros">${[['cal', 'cal'], ['p', 'protein'], ['c', 'carbs'], ['f', 'fat']].map(([k, l]) => `<label><input inputmode="decimal" data-i="${i}" data-f="${k}" value="${x[k]}"><span>${l}</span></label>`).join('')}</div>
+        <div class="snap-size">${[[0.5, '½×'], [0.75, '¾×'], [1.25, '1¼×'], [1.5, '1½×']].map(([m, l]) => `<button class="chip sm" data-x="scale" data-i="${i}" data-m="${m}">${l}</button>`).join('')}<span class="muted tiny">portion</span></div>
+      </div>`).join('')}
+      <div class="field"><label>Meal</label><div class="chips">${MEALS.map(x => `<button class="chip ${x.id === curMeal ? 'on' : ''}" data-x="meal" data-m="${x.id}">${x.icon} ${x.name}</button>`).join('')}</div></div>`;
+    const b = s.$('[data-x="add"]'); b.disabled = !total(); b.textContent = `Add · ~${fmt(total())} cal`;
+  };
+  const fail = msg => { s.$('#snapOut').innerHTML = `<p class="muted center">${msg}</p><button class="btn soft full" data-x="quickInstead">⚡ Type it in instead</button>`; };
+  s.on('click', '[data-x="quickInstead"]', () => { s.close(); openQuick({ meal: curMeal, date }); });
+  s.on('click', '[data-x="tick"]', el => { const x = items[el.dataset.i]; x.on = !x.on; draw(); });
+  s.on('click', '[data-x="meal"]', el => { curMeal = el.dataset.m; draw(); });
+  s.on('click', '[data-x="scale"]', el => { const x = items[el.dataset.i], m = +el.dataset.m; ['cal', 'p', 'c', 'f', 'fiber'].forEach(k => { x[k] = Math.round(x[k] * m); }); x.portion = `${el.textContent} of ${x.portion || 'the guess'}`; draw(); });
+  s.on('input', '[data-f]', el => { const x = items[el.dataset.i], f = el.dataset.f; x[f] = f === 'name' ? el.value : num(el.value);
+    const b = s.$('[data-x="add"]'); b.disabled = !total(); b.textContent = `Add · ~${fmt(total())} cal`; });
+  s.on('click', '[data-x="add"]', () => {
+    const on = items.filter(x => x.on && x.cal);
+    on.forEach(x => db.put('entries', { id: uid(), date, kind: 'quick', est: true, time: defaultTime(date, curMeal), name: x.name.trim() || 'Food', grams: null, meal: curMeal,
+      macros: { cal: x.cal, p: x.p, c: x.c, f: x.f, fiber: x.fiber || 0, sugar: 0, sodium: 0 } }));
+    s.close(); toast(`Added ${plural(on.length, 'item')} · ~${fmt(total())} cal`); onAdded?.(total());
+  });
+  try {
+    const r = await fetch(CONFIG_PUSH() + '/photo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: photo }) });
+    const j = await r.json();
+    if (!s.$('#snapOut')) return;
+    if (!r.ok || !j.items?.length) return fail(j.error === 'unclear' ? "Couldn't tell what's on the plate. Try a closer, brighter photo from above." : 'Pulse is busy right now. Try again in a minute.');
+    items = j.items.map(x => ({ ...x, on: true })); conf = j.confidence; note = j.note; draw();
+  } catch { if (s.$('#snapOut')) fail("Can't reach Pulse. Check your connection."); }
 }
 
 // ---------- food form ----------
