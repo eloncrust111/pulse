@@ -453,26 +453,38 @@ function winCard(date) {
 // ---------- games & training days ----------
 const gameTime = g => g.time ? fmtTime(g.time) : 'Time TBA';
 const vsAt = g => g.home ? 'vs' : '@';
-// Game-day fuel plan, timed back from tip-off. Standard sports-dietitian timing:
-// a carb-heavy, low-fat meal 3-4 h out, a small carb snack about an hour out,
-// fluids through the afternoon, then carbs + protein within an hour after.
+// Game-day nudge: just the one thing that matters right now, timed back from
+// tip-off (standard sports-dietitian timing: carb-heavy low-fat meal 3-4 h out,
+// a small carb snack ~1 h out, carbs + protein within an hour after). Wording
+// rotates per game and food ideas come from what she already eats, so it
+// doesn't read the same every game.
 // Plain minutes since midnight (toMin is shifted for bedtimes, so not used here).
 const dayMin = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
 const dayClock = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-function gamePlan(date, g) {
+function herFoods(test) {
+  const by = new Map();
+  db.list('entries').filter(e => e.date >= addDays(dateStr(), -45)).forEach(e => { const x = by.get(e.name) || { n: 0, m: e.macros }; x.n++; by.set(e.name, x); });
+  return [...by.entries()].filter(([, x]) => x.n >= 2 && test(x.m)).sort((a, b) => b[1].n - a[1].n).map(([n]) => n).slice(0, 4);
+}
+function gameNudge(date, g) {
   const tip = dayMin(g.time), now = date === dateStr() ? dayMin(timeStr()) : -1;
+  const seed = [...g.date].reduce((a, c) => a + c.charCodeAt(0), 0);
+  const pick = (list, k = 0) => list[(seed + k) % list.length];
+  const at = m => fmtTime(dayClock(Math.max(0, m)));
+  const meal = pick([...herFoods(m => m.c >= 45 && m.f <= 22 && m.cal >= 350), 'GF pasta with chicken', 'a big rice bowl', 'a baked potato with turkey'], 1);
+  const snack = pick([...herFoods(m => m.c >= 15 && m.f <= 6 && m.cal <= 300), 'a banana', 'GF pretzels', 'applesauce', 'a rice cake with honey'], 2);
+  const refuel = pick(['chocolate milk', 'a GF turkey wrap', 'Greek yogurt with granola (GF)', 'a rice bowl with chicken'], 3);
   const steps = [
-    [tip - 240, tip - 180, '🍝', 'Game meal', 'Mostly carbs + lean protein, easy on fat and fiber. GF pasta or rice with chicken is perfect.'],
-    [tip - 180, tip - 30, '💧', 'Sip water', 'About 2–3 cups spread over the next couple of hours.'],
-    [tip - 75, tip - 30, '🍌', 'Small snack', 'Quick carbs: a banana, GF pretzels or applesauce.'],
-    [tip, tip + 120, '🏀', 'Tip-off', 'Go get it.'],
-    [tip + 120, tip + 180, '🥛', 'Refuel', 'Within an hour: carbs + 20–30 g protein, like chocolate milk or a GF wrap.'],
+    [-1e4, tip - 240, 'next', '🍝', pick([`Game meal around ${at(tip - 240)}. ${esc(meal)} would be perfect.`, `Plan your game meal for ~${at(tip - 240)}: ${esc(meal)}, heavy on the carbs.`, `${at(tip - 240)}-ish: fuel up with ${esc(meal)}.`])],
+    [tip - 240, tip - 180, 'now', '🍝', pick([`Game meal time! ${esc(meal)}: big on carbs, easy on fat.`, `Eat now so it's digested by tip-off. ${esc(meal)} 👌`, `Fuel window is open: ${esc(meal)}.`], 4)],
+    [tip - 180, tip - 75, 'now', '💧', pick(['Keep a water bottle on you this afternoon.', "Sip, don't chug: a few cups before warmups.", 'Hydration check 💧 Finish a bottle before you leave.'], 5)],
+    [tip - 75, tip - 30, 'now', '🍌', pick([`Quick snack: ${esc(snack)}.`, `Little top-off before warmups: ${esc(snack)}.`, `Grab ${esc(snack)} now for fast energy.`], 6)],
+    [tip - 30, tip + 120, 'now', '🔥', pick([`Go get it, #${esc(profile()?.number || '11')} 🔥`, "Let's get this W 🏀", 'Leave it all on the court 💜', 'Trust the work. Go hoop.'], 7)],
+    [tip + 120, tip + 180, 'now', '🥛', pick([`Refuel within the hour: ${refuel}.`, `Recovery starts now: ${refuel} (carbs + protein).`, `Post-game fuel: ${refuel}.`], 8)],
   ];
-  const cur = steps.findIndex(([a, b]) => now >= a && now < b);
-  return `<div class="gp">${steps.map(([a, b, e, t, sub], i) => {
-    const st = now < 0 ? '' : now >= b ? 'done' : i === cur ? 'now' : '';
-    return `<div class="gp-row ${st}"><span class="gp-t">${fmtTime(dayClock(Math.max(0, a)))}</span><span class="gp-e">${st === 'done' ? '✓' : e}</span><div class="grow"><b>${t}</b>${st === 'now' ? '<span class="gp-now">Now</span>' : ''}<div class="gp-s">${sub}</div></div></div>`;
-  }).join('')}</div>`;
+  const st = now < 0 ? steps[0] : steps.find(([a, b]) => now >= a && now < b);
+  if (!st) return '';
+  return `<div class="gn"><span class="gn-e">${st[3]}</span><span class="grow">${st[4]}</span>${st[2] === 'now' && now >= 0 ? '<span class="gp-now">Now</span>' : ''}</div>`;
 }
 function tipIn(g) {
   const m = dayMin(g.time) - dayMin(timeStr());
@@ -487,7 +499,7 @@ function gameBanner(date) {
     <img class="team-logo" src="${teamLogo(g)}" alt="">
     <div class="grow"><div class="gb-k">🏀 Game day${plan && date === dateStr() && tipIn(g) ? ` · ${tipIn(g)}` : ''}</div><div class="gb-t">${vsAt(g)} ${esc(g.opp)}</div>
     <div class="gb-s">${g.result ? esc(g.result) : gameTime(g)} · ${esc(g.venue || g.where)}</div></div></div>
-    ${plan ? gamePlan(date, g) : ''}</section>`;
+    ${plan ? gameNudge(date, g) : ''}</section>`;
   }
   const n = nextGame(addDays(date, 1));
   if (!n || date < dateStr()) return '';
@@ -1045,43 +1057,76 @@ function weekCard(date) {
   </section>`;
 }
 
-// Weekly "Wrapped": a tap-through story of the week. Slides with no data are skipped.
+// Weekly "Wrapped": a tap-through story of the week. Slides with no data are
+// skipped. Numbers count up, visuals grow in, emojis float, and big moments
+// get confetti.
 function openWrapped(from, to) {
-  const w = weekStats([from, to]), g = goals(), dates = [];
+  const w = weekStats([from, to]), dates = [];
   for (let d = from; d <= to; d = addDays(d, 1)) dates.push(d);
   const days = dates.map(d => ({ ...(db.get('days', d) || {}), date: d }));
   const wd = d => parseDate(d).toLocaleDateString(undefined, { weekday: 'long' });
-  const best = (k, hi = true) => days.filter(d => d[k] != null).sort((a, b) => hi ? b[k] - a[k] : a[k] - b[k])[0];
+  const best = k => days.filter(d => d[k] != null).sort((a, b) => b[k] - a[k])[0];
   const counts = new Map();
   db.list('entries').forEach(e => { if (e.date >= from && e.date <= to && e.kind !== 'quick') counts.set(e.name, (counts.get(e.name) || 0) + 1); });
   const fav = [...counts.entries()].sort((a, b) => b[1] - a[1])[0];
   const short = d => parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  const sleepStr = v => fmtSleep(Math.round(v));
   const slides = [];
-  slides.push({ c: 'w1', k: 'Your week', big: `${esc(firstName())} 💜`, sub: `${short(from)} – ${short(to)}`, foot: 'Tap to keep going' });
-  if (w.sleepN) { const b = best('sleepMin');
-    slides.push({ c: 'w2', k: '😴 Sleep', big: fmtSleep(w.sleep), sub: 'average a night', foot: `Best night: <b>${fmtSleep(b.sleepMin)}</b> on ${wd(addDays(b.date, -1))} night${w.bedN ? `<br>On your bedtime plan <b>${w.nearBed} of ${w.bedN}</b> nights` : ''}` }); }
-  if (w.foodDays) slides.push({ c: 'w3', k: '🥩 Protein', big: `${w.protein}/${w.foodDays}`, sub: 'days you hit your protein goal', foot: `${fmt(w.cal)} cal a day on average${w.water ? `<br>💧 Water goal hit <b>${w.water}</b> ${w.water === 1 ? 'day' : 'days'}` : ''}` });
-  if (fav && fav[1] >= 2) slides.push({ c: 'w4', k: '🍽️ Your go-to', big: esc(fav[0]), sub: `${fav[1]} times this week`, foot: 'Certified comfort food.' });
-  if (w.train || w.games.length) slides.push({ c: 'w5', k: '💪 The grind', big: String(w.train), sub: `training session${w.train === 1 ? '' : 's'}`, foot: w.games.length ? w.games.map(x => `🏀 ${esc(x)}`).join('<br>') : 'Every rep counts.' });
+  slides.push({ c: 'w1', fx: ['💜', '✨', '🏀'], k: 'Your week in review', big: esc(firstName()), sub: `${short(from)} – ${short(to)}`, foot: "Let's see what you did 👀", art: '<div class="wr-orb">🏀</div>' });
+  if (w.sleepN) {
+    // Bars start at 5h so the differences between nights actually show.
+    const b = best('sleepMin'), goal = sleepGoal(), max = Math.max(goal, ...days.map(d => d.sleepMin || 0)) + 15, lo = 300;
+    const hgt = m => Math.max(0, Math.min(1, (m - lo) / (max - lo)));
+    const bars = days.map((d, i) => `<div class="wr-bar ${d.sleepMin >= goal - 10 ? 'hit' : ''}"><i style="--h:${d.sleepMin ? Math.max(0.04, hgt(d.sleepMin)) : 0};--d:${0.3 + i * 0.08}s"></i><span>${parseDate(addDays(d.date, -1)).toLocaleDateString(undefined, { weekday: 'narrow' })}</span></div>`).join('');
+    const good = w.sleep >= goal - 10;
+    slides.push({ c: 'w2', fx: ['💤', '🌙', '⭐'], k: '😴 Sleep', count: [w.sleep, sleepStr], sub: 'average a night', stamp: good ? 'Well rested 😮‍💨' : '',
+      art: `<div class="wr-bars7" style="--goal:${hgt(goal)}">${bars}<div class="wr-goal"></div></div>`,
+      foot: `Best night: <b>${fmtSleep(b.sleepMin)}</b>, ${wd(addDays(b.date, -1))} night${w.bedN ? `<br>On your bedtime plan <b>${w.nearBed} of ${w.bedN}</b> nights` : ''}`, party: good });
+  }
+  if (w.foodDays) {
+    const pct = w.protein / w.foodDays, C = 2 * Math.PI * 54;
+    slides.push({ c: 'w3', fx: ['🥩', '💪', '🍗'], k: '🥩 Protein', count: [w.protein, x => `${Math.round(x)}/${w.foodDays}`], sub: 'days you hit your protein goal', stamp: pct >= 0.8 ? 'Protein queen 👑' : '',
+      art: `<svg class="wr-ring" viewBox="0 0 120 120"><circle cx="60" cy="60" r="54"/><circle class="fill" cx="60" cy="60" r="54" style="--c:${C};--o:${C * (1 - pct)}"/></svg>`,
+      foot: `${fmt(w.cal)} cal a day on average${w.water ? `<br>💧 Water goal hit <b>${w.water}</b> ${w.water === 1 ? 'day' : 'days'}` : ''}`, party: pct >= 0.8 });
+  }
+  if (fav && fav[1] >= 2) slides.push({ c: 'w4', fx: ['🍽️', '😋', '🔥'], k: '🍽️ Your go-to', big: esc(fav[0]), sub: `you had it <b>${fav[1]}×</b> this week`, foot: 'Certified comfort food.', art: '<div class="wr-orb spin">😋</div>' });
+  if (w.train || w.games.length) slides.push({ c: 'w5', fx: ['🏀', '💪', '⚡'], k: '💪 The grind', count: [w.train, x => String(Math.round(x))], sub: `training session${w.train === 1 ? '' : 's'}`,
+    stamp: w.games.some(x => x.startsWith('W')) ? 'W secured 🏆' : w.train >= 6 ? 'Locked in 🔒' : '',
+    foot: w.games.length ? w.games.map(x => `🏀 ${esc(x)}`).join('<br>') : 'Every rep counts.', party: w.games.some(x => x.startsWith('W')) });
   const br = best('recovery');
-  if (br) slides.push({ c: 'w6', k: '💚 Recovery', big: `${br.recovery}%`, sub: `your best, on ${wd(br.date)}`, foot: w.rec != null ? `${Math.round(w.rec)}% average` : '' });
+  if (br) slides.push({ c: 'w6', fx: ['💚', '🔋', '✨'], k: '💚 Recovery', count: [br.recovery, x => `${Math.round(x)}%`], sub: `your best, on ${wd(br.date)}`, foot: w.rec != null ? `${Math.round(w.rec)}% average` : '', art: '<div class="wr-orb beat">💚</div>', stamp: br.recovery >= 90 ? 'Fully charged ⚡' : '' });
   const wins = [w.bedN && w.nearBed >= w.bedN - 1 && 'Sleep schedule on lock', w.foodDays && w.protein >= w.foodDays - 1 && 'Protein every day', !w.stomach && w.foodDays >= 4 && 'Zero stomach trouble', w.water >= 5 && 'Hydrated all week'].filter(Boolean);
-  slides.push({ c: 'w7', k: wins.length ? '🏆 Week in one line' : '🎯 Next week', big: wins.length ? wins[0] : 'Fresh start', sub: wins.length ? wins.slice(1).join(' · ') : "New week. Let's get it.", foot: `#${esc(profile()?.number || '11')} · Pulse` });
+  slides.push({ c: 'w7', fx: ['🏆', '🎉', '💜', '✨'], k: wins.length ? '🏆 Week in one line' : '🎯 Next week', big: wins.length ? wins[0] : 'Fresh start', sub: wins.length ? wins.slice(1).join(' · ') : "New week. Let's get it.", foot: `#${esc(profile()?.number || '11')} · Pulse`, party: true });
 
   const el = document.createElement('div');
   el.className = 'wrapped';
   document.body.appendChild(el);
-  let i = 0, timer;
-  const close = () => { clearTimeout(timer); el.remove(); };
+  let i = 0, timer, raf;
+  const close = () => { clearTimeout(timer); cancelAnimationFrame(raf); el.remove(); };
+  const countUp = (node, to, f) => {
+    const t0 = performance.now(), dur = 1100;
+    const step = t => { const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3); node.textContent = f(to * e); if (k < 1) raf = requestAnimationFrame(step); };
+    raf = requestAnimationFrame(step);
+  };
   const show = () => {
-    clearTimeout(timer);
-    const x = slides[i];
+    clearTimeout(timer); cancelAnimationFrame(raf);
+    const x = slides[i], last = i === slides.length - 1;
     el.className = `wrapped ${x.c}`;
-    el.innerHTML = `<div class="wr-bars">${slides.map((_, j) => `<i class="${j < i ? 'done' : j === i ? 'on' : ''}"></i>`).join('')}</div>
+    const floaters = Array.from({ length: 14 }, (_, j) => `<span class="wr-fl" style="left:${Math.random() * 100}%;font-size:${16 + Math.random() * 22}px;animation-duration:${5 + Math.random() * 5}s;animation-delay:${-Math.random() * 8}s">${x.fx[j % x.fx.length]}</span>`).join('');
+    el.innerHTML = `<div class="wr-blob a"></div><div class="wr-blob b"></div>${floaters}
+      <div class="wr-bars">${slides.map((_, j) => `<i class="${j < i ? 'done' : j === i ? 'on' : ''}"></i>`).join('')}</div>
       <button class="wr-x" aria-label="Close">✕</button>
-      <div class="wr-body"><div class="wr-k">${x.k}</div><div class="wr-big">${x.big}</div><div class="wr-sub">${x.sub}</div><div class="wr-foot">${x.foot}</div></div>
-      ${i === slides.length - 1 ? `<div class="wr-end">📸 Screenshot to share</div>` : ''}`;
-    if (i === slides.length - 1) celebrate('', true); else timer = setTimeout(() => { i++; show(); }, 5000);
+      <div class="wr-body">
+        <div class="wr-k">${x.k}</div>
+        <div class="wr-big">${x.big || ''}</div>
+        <div class="wr-sub">${x.sub}</div>
+        ${x.art ? `<div class="wr-art">${x.art}</div>` : ''}
+        ${x.stamp ? `<div class="wr-stamp">${x.stamp}</div>` : ''}
+        <div class="wr-foot">${x.foot}</div></div>
+      ${last ? `<div class="wr-end">📸 Screenshot to share · tap to close</div>` : ''}`;
+    if (x.count) countUp(el.querySelector('.wr-big'), x.count[0], x.count[1]);
+    if (x.party) setTimeout(() => celebrate('', last), x.count ? 1000 : 400);
+    if (!last) timer = setTimeout(() => { i++; show(); }, 6000);
   };
   el.addEventListener('click', e => {
     if (e.target.closest('.wr-x')) return close();
@@ -2897,6 +2942,7 @@ function fullscreen(html) {
 const needsSetup = () => !profile() || profile().setupDone === false;
 function showWelcome() {
   const p0 = profile() || {};
+  let saveGoalsStrict = false;
   let i = p0.setupStep || 0, perDay = new Set([1, 2, 3, 4, 5].map(d => p0.wakeByDay?.[d])).size > 1;
   // Wake times as shown on the sleep step: one per day, or weekdays + weekends.
   const readWake = () => {
@@ -2917,19 +2963,29 @@ function showWelcome() {
       save: () => { const n = $('#obName')?.value.trim(); if (!OWNER && !n) return toast('Type your name first'), false;
         saveProfile({ setupDone: false, name: OWNER?.name || n, number: OWNER?.number || '', glutenFree: OWNER?.glutenFree || !!profile()?.glutenFree, goals: profile()?.goals || { ...DEFAULT_GOALS } }); } },
     { k: 'goals', e: '🎯', t: 'Daily goals',
-      b: () => { const p = profile() || {}, g = goals(), f = (k, l, u) => `<div class="field"><label>${l}</label><div class="unit-in"><input data-g="${k}" inputmode="decimal" value="${g[k]}"><span>${u}</span></div></div>`;
-        const tr = k => p.track?.[k] ?? false, src = p.goalsFrom || 'guess';
-        return `<p class="ob-sub">Calories, protein and water are the basics. Where do your numbers come from?</p>
-          ${opt('goalsFrom', 'guess', src, '🤷‍♀️', 'Not sure yet', "Start with Pulse's numbers, change them anytime")}
-          ${opt('goalsFrom', 'mine', src, '📋', 'I have my numbers', 'From my dietitian or coach')}
-          <div class="grid2 mt">${f('cal', 'Calories', 'cal')}${f('p', 'Protein', 'g')}${f('water', 'Water', 'oz')}${OPTIONAL_MACROS.filter(([k]) => tr(k)).map(([k, l]) => f(k, l, 'g')).join('')}</div>
-          <label class="ob-lbl">Also track <span class="muted">(optional)</span></label>
-          <div class="chip-row">${OPTIONAL_MACROS.map(([k, l]) => `<button type="button" class="chip sm ${tr(k) ? 'on' : ''}" data-o="track" data-k="${k}">${tr(k) ? '✓ ' : '＋ '}${l}</button>`).join('')}</div>
-          ${src === 'guess' ? `<p class="muted tiny">A starting point for a college athlete. Every body is different, so check with your dietitian when you can.</p>` : ''}`; },
-      save: () => { const g = { ...goals() }; $$('[data-g]').forEach(x => { if (x.value.trim()) g[x.dataset.g] = num(x.value); });
-        const typed = $$('[data-g]').some(x => num(x.value) !== DEFAULT_GOALS[x.dataset.g]);
+      b: () => { const p = profile() || {}, src = p.goalsFrom || 'guess', tr = k => p.track?.[k] ?? false;
+        // Her own numbers start blank so she types what her dietitian gave her.
+        const g = p.goalsGuess === false ? goals() : {}, d = DEFAULT_GOALS;
+        const f = (k, l, u) => `<div class="field"><label>${l}</label><div class="unit-in"><input data-g="${k}" inputmode="decimal" value="${g[k] ?? ''}" placeholder="Type it"><span>${u}</span></div></div>`;
+        const chips = `<div class="chip-row">${OPTIONAL_MACROS.map(([k, l]) => `<button type="button" class="chip sm ${tr(k) ? 'on' : ''}" data-o="track" data-k="${k}">${tr(k) ? '✓ ' : '＋ '}${l}</button>`).join('')}</div>`;
+        return `<p class="ob-sub">Did your dietitian give you numbers?</p>
+          ${opt('goalsFrom', 'guess', src, '🤷‍♀️', 'Not yet / not sure', 'Pulse picks a starting point for you')}
+          ${opt('goalsFrom', 'mine', src, '📋', 'Yes, I have my numbers', "I'll type them in")}
+          ${src === 'guess' ? `<div class="ob-plan">
+              <div><b>${fmt(d.cal)}</b><span>calories</span></div><div><b>${d.p}g</b><span>protein</span></div><div><b>${d.water} oz</b><span>water</span></div></div>
+            <p class="muted tiny">A typical starting point for a college basketball player. Every body is different, so swap in your dietitian's numbers anytime in <b>Me</b>.</p>
+            <label class="ob-lbl">Also track <span class="muted">(optional)</span></label>${chips}`
+          : `<div class="grid2 mt">${f('cal', 'Calories', 'cal')}${f('p', 'Protein', 'g')}${f('water', 'Water', 'oz')}${OPTIONAL_MACROS.filter(([k]) => tr(k)).map(([k, l]) => f(k, l, 'g')).join('')}</div>
+            <label class="ob-lbl">Did they give you any of these too? <span class="muted">(optional)</span></label>${chips}`}`; },
+      save: () => {
         const track = { c: false, f: false, fiber: false, ...(profile()?.track || {}) };
-        saveProfile({ goals: g, track, goalsGuess: (profile()?.goalsFrom || 'guess') === 'guess' && !typed }); } },
+        if ((profile()?.goalsFrom || 'guess') === 'guess') return saveProfile({ goals: { ...DEFAULT_GOALS }, track, goalsGuess: true });
+        // Partial save while toggling chips; the Next button checks the basics.
+        const g = { ...DEFAULT_GOALS }; let miss = false;
+        $$('[data-g]').forEach(x => { if (x.value.trim()) g[x.dataset.g] = num(x.value); else if (x.dataset.g === 'cal' || x.dataset.g === 'p') miss = true; });
+        saveProfile({ goals: g, track, goalsGuess: false });
+        if (miss && saveGoalsStrict) return toast('Add your calories and protein'), false;
+      } },
     { k: 'sleep', e: '😴', t: 'Sleep',
       b: () => `<p class="ob-sub">Pulse plans your bedtime every night from these. Game nights move it automatically.</p>
         <div class="field"><label>How much sleep do you want?</label><select id="obSleep">${[420, 450, 480, 510, 540, 570, 600].map(m => `<option value="${m}" ${m === sleepGoal() ? 'selected' : ''}>${fmtSleep(m)}</option>`).join('')}</select></div>
@@ -2995,7 +3051,8 @@ function showWelcome() {
     if (o === 'perDay') { saveProfile({ wakeByDay: readWake() }); perDay = !perDay; return draw(); }
     if (o === 'track') { STEPS[i].save(); const tr = profile()?.track || {}; saveProfile({ track: { ...tr, [t.dataset.k]: !(tr[t.dataset.k] ?? false) } }); return draw(); }
     if (o !== 'next') return;
-    if (STEPS[i].save?.() === false) return;
+    saveGoalsStrict = true; const ok = STEPS[i].save?.(); saveGoalsStrict = false;
+    if (ok === false) return;
     if (i < STEPS.length - 1) { i++; saveProfile({ setupStep: i }); return draw(); }
     main.onclick = null;
     saveProfile({ setupDone: true, setupStep: 0 });
