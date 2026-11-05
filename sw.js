@@ -1,6 +1,6 @@
 // Offline support. App files: network first (so updates show up right away),
 // falling back to cache. Libraries from CDNs: cache first.
-const CACHE = 'pulse-v22';
+const CACHE = 'pulse-v23';
 const SHELL = ['./', 'index.html', 'styles.css', 'config.js', 'manifest.webmanifest',
   'js/app.js', 'js/db.js', 'js/util.js', 'js/charts.js', 'js/patterns.js', 'js/lookup.js', 'js/sync.js', 'js/share-image.js', 'js/games.js', 'js/health.js', 'js/notify.js', 'js/demo.js',
   'icons/icon-192.png', 'icons/apple-touch-icon.png'];
@@ -64,18 +64,19 @@ async function newWin() {
     if (!hit) return null;
     await c.put('win-seen.json', new Response(JSON.stringify([...seen, hit[0]])));
     const g = hit[1];
-    return { id: 'win', title: '🏆 Pilots win!', body: `Congrats on the W ${g.at} ${g.opp}, ${g.us}-${g.them} 🎉` };
+    return { id: 'win', keep: 1440, title: '🏆 Pilots win!', body: `Congrats on the W ${g.at} ${g.opp}, ${g.us}-${g.them} 🎉` };
   } catch { return null; }
 }
 
 self.addEventListener('push', e => {
   e.waitUntil((async () => {
     const reg = self.registration;
-    (await reg.getNotifications({ tag: 'wish' })).forEach(n => n.close());
+    // Clear anything that has outlived its time (11:11 after its minute, last night's bedtime...).
+    (await reg.getNotifications()).forEach(n => { if (n.tag === 'wish' || Date.now() > (n.data?.until ?? Infinity)) n.close(); });
     const due = await dueNow(), win = await newWin();
     if (win) due.push(win);
-    if (!due.length) due.push({ id: 'pulse', title: 'Pulse', body: 'Tap to open' });
-    for (const i of due) await reg.showNotification(i.title, { body: i.body, tag: i.close ? 'wish' : i.id, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { at: Date.now() } });
+    if (!due.length) due.push({ id: 'pulse', keep: 30, title: 'Pulse', body: 'Tap to open' });
+    for (const i of due) await reg.showNotification(i.title, { body: i.body, tag: i.close ? 'wish' : i.id, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { at: Date.now(), until: Date.now() + (i.keep || 720) * 60e3 } });
     // The 11:11 one only stays for its minute.
     const wish = due.find(i => i.close);
     if (wish) { await wait(wish.close * 1000); (await reg.getNotifications({ tag: 'wish' })).forEach(n => n.close()); }

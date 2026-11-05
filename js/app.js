@@ -453,39 +453,11 @@ function winCard(date) {
 // ---------- games & training days ----------
 const gameTime = g => g.time ? fmtTime(g.time) : 'Time TBA';
 const vsAt = g => g.home ? 'vs' : '@';
-// Game-day nudge: just the one thing that matters right now, timed back from
-// tip-off (standard sports-dietitian timing: carb-heavy low-fat meal 3-4 h out,
-// a small carb snack ~1 h out, carbs + protein within an hour after). Wording
-// rotates per game and food ideas come from what she already eats, so it
-// doesn't read the same every game.
 // Plain minutes since midnight (toMin is shifted for bedtimes, so not used here).
 const dayMin = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
-const dayClock = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-function herFoods(test) {
-  const by = new Map();
-  db.list('entries').filter(e => e.date >= addDays(dateStr(), -45)).forEach(e => { const x = by.get(e.name) || { n: 0, m: e.macros }; x.n++; by.set(e.name, x); });
-  return [...by.entries()].filter(([, x]) => x.n >= 2 && test(x.m)).sort((a, b) => b[1].n - a[1].n).map(([n]) => n).slice(0, 4);
-}
-function gameNudge(date, g) {
-  const tip = dayMin(g.time), now = date === dateStr() ? dayMin(timeStr()) : -1;
-  const seed = [...g.date].reduce((a, c) => a + c.charCodeAt(0), 0);
-  const pick = (list, k = 0) => list[(seed + k) % list.length];
-  const at = m => fmtTime(dayClock(Math.max(0, m)));
-  const meal = pick([...herFoods(m => m.c >= 45 && m.f <= 22 && m.cal >= 350), 'GF pasta with chicken', 'a big rice bowl', 'a baked potato with turkey'], 1);
-  const snack = pick([...herFoods(m => m.c >= 15 && m.f <= 6 && m.cal <= 300), 'a banana', 'GF pretzels', 'applesauce', 'a rice cake with honey'], 2);
-  const refuel = pick(['chocolate milk', 'a GF turkey wrap', 'Greek yogurt with granola (GF)', 'a rice bowl with chicken'], 3);
-  const steps = [
-    [-1e4, tip - 240, 'next', '🍝', pick([`Game meal around ${at(tip - 240)}. ${esc(meal)} would be perfect.`, `Plan your game meal for ~${at(tip - 240)}: ${esc(meal)}, heavy on the carbs.`, `${at(tip - 240)}-ish: fuel up with ${esc(meal)}.`])],
-    [tip - 240, tip - 180, 'now', '🍝', pick([`Game meal time! ${esc(meal)}: big on carbs, easy on fat.`, `Eat now so it's digested by tip-off. ${esc(meal)} 👌`, `Fuel window is open: ${esc(meal)}.`], 4)],
-    [tip - 180, tip - 75, 'now', '💧', pick(['Keep a water bottle on you this afternoon.', "Sip, don't chug: a few cups before warmups.", 'Hydration check 💧 Finish a bottle before you leave.'], 5)],
-    [tip - 75, tip - 30, 'now', '🍌', pick([`Quick snack: ${esc(snack)}.`, `Little top-off before warmups: ${esc(snack)}.`, `Grab ${esc(snack)} now for fast energy.`], 6)],
-    [tip - 30, tip + 120, 'now', '🔥', pick([`Go get it, #${esc(profile()?.number || '11')} 🔥`, "Let's get this W 🏀", 'Leave it all on the court 💜', 'Trust the work. Go hoop.'], 7)],
-    [tip + 120, tip + 180, 'now', '🥛', pick([`Refuel within the hour: ${refuel}.`, `Recovery starts now: ${refuel} (carbs + protein).`, `Post-game fuel: ${refuel}.`], 8)],
-  ];
-  const st = now < 0 ? steps[0] : steps.find(([a, b]) => now >= a && now < b);
-  if (!st) return '';
-  return `<div class="gn"><span class="gn-e">${st[3]}</span><span class="grow">${st[4]}</span>${st[2] === 'now' && now >= 0 ? '<span class="gp-now">Now</span>' : ''}</div>`;
-}
+// Short game-day line, different each game, never "IT'S GAME DAY".
+const HYPE = ['Lock in', 'Go get it, #11', 'Trust the work', 'Your night', 'Go hoop', 'Leave it all out there', 'Play free', 'Let it fly'];
+const hype = g => HYPE[[...g.date].reduce((a, c) => a + c.charCodeAt(0), 0) % HYPE.length].replace('#11', '#' + (profile()?.number || '11'));
 function tipIn(g) {
   const m = dayMin(g.time) - dayMin(timeStr());
   return m > 0 ? `Tip-off in ${m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m} min`}` : m > -120 ? 'Game on 🔥' : '';
@@ -494,12 +466,12 @@ function gameBanner(date) {
   const g = gameOn(date);
   if (g) {
     const plan = !g.result && g.time && date >= dateStr();
-    if (plan && date === dateStr() && !ui.gameSeen) { ui.gameSeen = true; setTimeout(() => celebrate(`Game day 🏀 ${vsAt(g)} ${g.opp}`), 600); }
+    if (plan && date === dateStr() && !ui.gameSeen) { ui.gameSeen = true; setTimeout(() => celebrate(`${hype(g)} 🏀`), 600); }
     return `<section class="game-banner ${plan ? 'gd' : ''}"><div class="gb-head">
     <img class="team-logo" src="${teamLogo(g)}" alt="">
     <div class="grow"><div class="gb-k">🏀 Game day${plan && date === dateStr() && tipIn(g) ? ` · ${tipIn(g)}` : ''}</div><div class="gb-t">${vsAt(g)} ${esc(g.opp)}</div>
     <div class="gb-s">${g.result ? esc(g.result) : gameTime(g)} · ${esc(g.venue || g.where)}</div></div></div>
-    ${plan ? gameNudge(date, g) : ''}</section>`;
+  </section>`;
   }
   const n = nextGame(addDays(date, 1));
   if (!n || date < dateStr()) return '';
@@ -910,19 +882,19 @@ const nOn = k => profile()?.[k] ?? NOTIFS.find(n => n[0] === k)[3];
 function notifyItems() {
   const t = dateStr(), items = [];
   // Easter egg: no setting for this one.
-  items.push({ id: 'wish', at: '11:11', ttl: 60, close: 60, title: '11:11', body: '🌠' });
+  items.push({ id: 'wish', at: '11:11', ttl: 60, close: 60, keep: 1, title: '11:11', body: '🌠' });
   if (nOn('n_bed')) for (let i = 0; i < 8; i++) {
     const d = addDays(t, i), b = bedGoal(d), at = fromMin(toMin(b) - 30);
-    if (i > 0 || at > timeStr()) items.push({ id: 'bed-' + d, date: d, at, ttl: 1800, title: '🌙 Bedtime in 30 min', body: `Bed by ${fmtTime(b)} to get your sleep in.` });
+    if (i > 0 || at > timeStr()) items.push({ id: 'bed-' + d, date: d, at, ttl: 1800, keep: 30 + sleepGoal(), title: '🌙 Bedtime in 30 min', body: `Bed by ${fmtTime(b)} to get your sleep in.` });
   }
   if (nOn('n_game')) GAMES.filter(g => g.date >= t).slice(0, 10).forEach(g =>
-    items.push({ id: 'game-' + g.date, date: g.date, at: g.time && g.time < '12:00' ? hmMinus(g.time, 180) : '09:00', ttl: 10800, title: '🏀 Game day', body: `${vsAt(g)} ${g.opp} · ${gameTime(g)}` }));
-  if (nOn('n_week')) { const dow = parseDate(t).getDay(), sun = addDays(t, (7 - dow) % 7); items.push({ id: 'week-' + sun, date: sun, at: '18:00', ttl: 10800, title: '📊 Your week', body: 'Sleep, recovery and fueling, all in one card.' }); }
+    items.push({ id: 'game-' + g.date, date: g.date, at: g.time && g.time < '12:00' ? hmMinus(g.time, 180) : '09:00', ttl: 10800, keep: 900, title: `🏀 ${vsAt(g)} ${g.opp} · ${gameTime(g)}`, body: `${hype(g)} 🔥` }));
+  if (nOn('n_week')) { const dow = parseDate(t).getDay(), sun = addDays(t, (7 - dow) % 7); items.push({ id: 'week-' + sun, date: sun, at: '18:00', ttl: 10800, keep: 360, title: '📊 Your week', body: 'Sleep, recovery and fueling, all in one card.' }); }
   const meds = medList();
   if (nOn('n_meds') && meds.length) {
     const taken = db.get('days', t)?.meds || {}, am = meds.filter(m => medWhen(m) !== 'Night'), pm = meds.filter(m => medWhen(m) === 'Night');
-    if (am.length) items.push({ id: 'meds-am', at: medsAm(), ttl: 7200, skip: am.every(m => taken[m.id]) ? [t] : [], title: '💊 Morning meds', body: "Not checked off yet today." });
-    if (pm.length) items.push({ id: 'meds-pm', at: medsPm(), ttl: 7200, skip: pm.every(m => taken[m.id]) ? [t] : [], title: '💊 Night meds', body: "Not checked off yet tonight." });
+    if (am.length) items.push({ id: 'meds-am', at: medsAm(), ttl: 7200, keep: 720, skip: am.every(m => taken[m.id]) ? [t] : [], title: '💊 Morning meds', body: "Not checked off yet today." });
+    if (pm.length) items.push({ id: 'meds-pm', at: medsPm(), ttl: 7200, keep: 360, skip: pm.every(m => taken[m.id]) ? [t] : [], title: '💊 Night meds', body: "Not checked off yet tonight." });
   }
   const preps = activePreps(), left = preps.reduce((a, p) => a + p.left, 0);
   if (nOn('n_prep') && left > 0 && left <= 1) {
@@ -931,20 +903,32 @@ function notifyItems() {
     let note = {};
     try { note = JSON.parse(localStorage.getItem('pulsePrepNote') || '{}'); } catch {}
     if (note.key !== key) { note = { key, date: timeStr() < '17:00' ? t : addDays(t, 1) }; try { localStorage.setItem('pulsePrepNote', JSON.stringify(note)); } catch {} }
-    if (note.date >= t) items.push({ id: 'prep', date: note.date, at: '17:00', ttl: 14400, title: '🥡 Last meal-prep container', body: 'Might be time to cook a new batch.' });
+    if (note.date >= t) items.push({ id: 'prep', date: note.date, at: '17:00', ttl: 14400, keep: 360, title: '🥡 Last meal-prep container', body: 'Might be time to cook a new batch.' });
   }
   if (nOn('n_period') && periodOn()) {
     const c = cycleInfo();
     const eve = c.next && addDays(c.next, -1);
-    if (eve && eve >= t) items.push({ id: 'period', date: eve, at: fromMin(toMin(bedGoal(eve)) - 120), ttl: 7200, title: 'Heads-up', body: '🌸 Might start tomorrow.' });
+    if (eve && eve >= t) items.push({ id: 'period', date: eve, at: fromMin(toMin(bedGoal(eve)) - 120), ttl: 7200, keep: 720, title: 'Heads-up', body: '🌸 Might start tomorrow.' });
   }
   return items;
+}
+// Notifications she's already taken care of: meds checked off, or the night's sleep logged.
+function handledNotes() {
+  const t = dateStr(), y = addDays(t, -1), taken = db.get('days', t)?.meds || {}, meds = medList();
+  const done = [];
+  if (meds.filter(m => medWhen(m) !== 'Night').every(m => taken[m.id])) done.push('meds-am');
+  if (meds.filter(m => medWhen(m) === 'Night').every(m => taken[m.id])) done.push('meds-pm');
+  if (db.get('days', t)?.sleepMin || timeStr() > '05:00') done.push('bed-' + y);
+  return done;
 }
 let notifyTimer;
 function scheduleNotify(ms = 1500) {
   if (DEMO || NEW) return;
   clearTimeout(notifyTimer);
-  notifyTimer = setTimeout(() => notify.saveSchedule(notifyItems(), { wins: nOn('n_win') }).catch(() => {}), ms);
+  notifyTimer = setTimeout(() => {
+    notify.clearStale(handledNotes());
+    notify.saveSchedule(notifyItems(), { wins: nOn('n_win') }).catch(() => {});
+  }, ms);
 }
 async function turnOnNotify() {
   if (DEMO || NEW) return toast("This is a test version. Notifications are off here.");
@@ -1072,31 +1056,31 @@ function openWrapped(from, to) {
   const short = d => parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
   const sleepStr = v => fmtSleep(Math.round(v));
   const slides = [];
-  slides.push({ c: 'w1', fx: ['💜', '✨', '🏀'], k: 'Your week in review', big: esc(firstName()), sub: `${short(from)} – ${short(to)}`, foot: "Let's see what you did 👀", art: '<div class="wr-orb">🏀</div>' });
+  slides.push({ c: 'w1', fx: ['💜', '✨', '🏀'], k: 'Your week in review', big: esc(firstName()), sub: `${short(from)} – ${short(to)}`, foot: 'Tap to go through it', art: '<div class="wr-orb">🏀</div>' });
   if (w.sleepN) {
     // Bars start at 5h so the differences between nights actually show.
     const b = best('sleepMin'), goal = sleepGoal(), max = Math.max(goal, ...days.map(d => d.sleepMin || 0)) + 15, lo = 300;
     const hgt = m => Math.max(0, Math.min(1, (m - lo) / (max - lo)));
     const bars = days.map((d, i) => `<div class="wr-bar ${d.sleepMin >= goal - 10 ? 'hit' : ''}"><i style="--h:${d.sleepMin ? Math.max(0.04, hgt(d.sleepMin)) : 0};--d:${0.3 + i * 0.08}s"></i><span>${parseDate(addDays(d.date, -1)).toLocaleDateString(undefined, { weekday: 'narrow' })}</span></div>`).join('');
     const good = w.sleep >= goal - 10;
-    slides.push({ c: 'w2', fx: ['💤', '🌙', '⭐'], k: '😴 Sleep', count: [w.sleep, sleepStr], sub: 'average a night', stamp: good ? 'Well rested 😮‍💨' : '',
+    slides.push({ c: 'w2', fx: ['💤', '🌙', '⭐'], k: '😴 Sleep', count: [w.sleep, sleepStr], sub: 'average a night', stamp: good ? 'Sleep goal ✓' : '',
       art: `<div class="wr-bars7" style="--goal:${hgt(goal)}">${bars}<div class="wr-goal"></div></div>`,
       foot: `Best night: <b>${fmtSleep(b.sleepMin)}</b>, ${wd(addDays(b.date, -1))} night${w.bedN ? `<br>On your bedtime plan <b>${w.nearBed} of ${w.bedN}</b> nights` : ''}`, party: good });
   }
   if (w.foodDays) {
     const pct = w.protein / w.foodDays, C = 2 * Math.PI * 54;
-    slides.push({ c: 'w3', fx: ['🥩', '💪', '🍗'], k: '🥩 Protein', count: [w.protein, x => `${Math.round(x)}/${w.foodDays}`], sub: 'days you hit your protein goal', stamp: pct >= 0.8 ? 'Protein queen 👑' : '',
+    slides.push({ c: 'w3', fx: ['🥩', '💪', '🍗'], k: '🥩 Protein', count: [w.protein, x => `${Math.round(x)}/${w.foodDays}`], sub: 'days you hit your protein goal', stamp: pct >= 0.8 ? 'Protein goal ✓' : '',
       art: `<svg class="wr-ring" viewBox="0 0 120 120"><circle cx="60" cy="60" r="54"/><circle class="fill" cx="60" cy="60" r="54" style="--c:${C};--o:${C * (1 - pct)}"/></svg>`,
       foot: `${fmt(w.cal)} cal a day on average${w.water ? `<br>💧 Water goal hit <b>${w.water}</b> ${w.water === 1 ? 'day' : 'days'}` : ''}`, party: pct >= 0.8 });
   }
-  if (fav && fav[1] >= 2) slides.push({ c: 'w4', fx: ['🍽️', '😋', '🔥'], k: '🍽️ Your go-to', big: esc(fav[0]), sub: `you had it <b>${fav[1]}×</b> this week`, foot: 'Certified comfort food.', art: '<div class="wr-orb spin">😋</div>' });
+  if (fav && fav[1] >= 2) slides.push({ c: 'w4', fx: ['🍽️', '😋', '🔥'], k: '🍽️ Your go-to', big: esc(fav[0]), sub: `you had it <b>${fav[1]}×</b> this week`, foot: '', art: '<div class="wr-orb spin">😋</div>' });
   if (w.train || w.games.length) slides.push({ c: 'w5', fx: ['🏀', '💪', '⚡'], k: '💪 The grind', count: [w.train, x => String(Math.round(x))], sub: `training session${w.train === 1 ? '' : 's'}`,
-    stamp: w.games.some(x => x.startsWith('W')) ? 'W secured 🏆' : w.train >= 6 ? 'Locked in 🔒' : '',
-    foot: w.games.length ? w.games.map(x => `🏀 ${esc(x)}`).join('<br>') : 'Every rep counts.', party: w.games.some(x => x.startsWith('W')) });
+    stamp: w.games.some(x => x.startsWith('W')) ? 'Pilots W 🏆' : '',
+    foot: w.games.length ? w.games.map(x => `🏀 ${esc(x)}`).join('<br>') : '', party: w.games.some(x => x.startsWith('W')) });
   const br = best('recovery');
-  if (br) slides.push({ c: 'w6', fx: ['💚', '🔋', '✨'], k: '💚 Recovery', count: [br.recovery, x => `${Math.round(x)}%`], sub: `your best, on ${wd(br.date)}`, foot: w.rec != null ? `${Math.round(w.rec)}% average` : '', art: '<div class="wr-orb beat">💚</div>', stamp: br.recovery >= 90 ? 'Fully charged ⚡' : '' });
-  const wins = [w.bedN && w.nearBed >= w.bedN - 1 && 'Sleep schedule on lock', w.foodDays && w.protein >= w.foodDays - 1 && 'Protein every day', !w.stomach && w.foodDays >= 4 && 'Zero stomach trouble', w.water >= 5 && 'Hydrated all week'].filter(Boolean);
-  slides.push({ c: 'w7', fx: ['🏆', '🎉', '💜', '✨'], k: wins.length ? '🏆 Week in one line' : '🎯 Next week', big: wins.length ? wins[0] : 'Fresh start', sub: wins.length ? wins.slice(1).join(' · ') : "New week. Let's get it.", foot: `#${esc(profile()?.number || '11')} · Pulse`, party: true });
+  if (br) slides.push({ c: 'w6', fx: ['💚', '🔋', '✨'], k: '💚 Recovery', count: [br.recovery, x => `${Math.round(x)}%`], sub: `your best, on ${wd(br.date)}`, foot: w.rec != null ? `${Math.round(w.rec)}% average` : '', art: '<div class="wr-orb beat">💚</div>', stamp: br.recovery >= 90 ? '90%+ day' : '' });
+  const wins = [w.bedN && w.nearBed >= w.bedN - 1 && `On your bedtime ${w.nearBed} of ${w.bedN} nights`, w.foodDays && w.protein >= w.foodDays - 1 && `Protein goal ${w.protein} of ${w.foodDays} days`, !w.stomach && w.foodDays >= 4 && 'No stomach issues', w.water >= 5 && `Water goal ${w.water} days`].filter(Boolean);
+  slides.push({ c: 'w7', fx: ['🏆', '🎉', '💜', '✨'], k: wins.length ? '🏆 Best of the week' : '🎯 Next week', big: wins.length ? wins[0] : 'New week', sub: wins.length ? wins.slice(1).join(' · ') : '', foot: `#${esc(profile()?.number || '11')} · Pulse`, party: true });
 
   const el = document.createElement('div');
   el.className = 'wrapped';
@@ -3129,7 +3113,7 @@ function startApp({ first = false } = {}) {
   splash(first);
   if (DEMO) document.body.insertAdjacentHTML('beforeend', '<div class="demo-tag">Sample data</div>');
   navigator.storage?.persist?.();
-  notify.clearStale();
+  notify.clearStale(handledNotes());
   notify.isOn().then(on => { ui.notifyOn = on; if (ui.tab === 'me') queueRender(); });
   refreshResults();
   scheduleNotify();
@@ -3176,7 +3160,7 @@ document.addEventListener('visibilitychange', () => {
   const t = dateStr();
   if (t !== lastToday) { if (ui.date === lastToday) ui.date = t; lastToday = t; queueRender(); }
   offerPaste();
-  notify.clearStale();
+  notify.clearStale(handledNotes());
   scheduleNotify();
   wishCheck();
   refreshResults();

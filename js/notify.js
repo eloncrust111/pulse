@@ -50,11 +50,15 @@ export async function saveSchedule(items, { wins = true } = {}) {
   if (r.ok) try { localStorage.setItem('pulseNotifySent', JSON.stringify({ body, at: Date.now() })); } catch {}
 }
 
-// The 11:11 notification only lives for its minute; clear it if it's still around.
-export async function clearStale() {
+// Take old notifications off the lock screen: anything past its time (11:11
+// after a minute, bedtime by morning...) plus ones she already dealt with.
+export async function clearStale(done = []) {
   try {
     const reg = await navigator.serviceWorker?.getRegistration();
-    (await reg?.getNotifications({ tag: 'wish' }) || []).forEach(n => { if (Date.now() - (n.timestamp || 0) > 60e3) n.close(); });
+    (await reg?.getNotifications() || []).forEach(n => {
+      const until = n.data?.until ?? (n.tag === 'wish' ? (n.timestamp || 0) + 60e3 : Infinity);
+      if (Date.now() > until || done.includes(n.tag)) n.close();
+    });
   } catch {}
 }
 
