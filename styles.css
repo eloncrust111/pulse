@@ -828,3 +828,5 @@ body.is-new .ob { padding-top: calc(max(env(safe-area-inset-top), 20px) + 40px);
 .wrapped-btn { background-size: 200% 100%; animation: wkshine 6s linear infinite; background-image: linear-gradient(110deg, #2b1d6b, #7b5cd6, #ef7fb0, #7b5cd6, #2b1d6b); }
 .wrapped-btn > span:first-child { animation: wrbeat 2s ease-in-out infinite; }
 @media (prefers-reduced-motion: reduce) { .wr-fl, .wr-blob { display: none; } .wr-body > * { animation-duration: .01s !important; } }
+.game-banner[data-act] { cursor: pointer; }
+.gb-tap { align-self: center; flex: none; padding: 6px 10px; border-radius: 999px; background: rgba(255, 255, 255, .18); font-size: 12px; font-weight: 700; white-space: nowrap; }

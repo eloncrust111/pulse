@@ -451,13 +451,69 @@ function winCard(date) {
 }
 
 // ---------- games & training days ----------
-const gameTime = g => g.time ? fmtTime(g.time) : 'Time TBA';
+// The Pilots post every tip-off in Pacific time. Turn each into her phone's own
+// time zone, so a 6 PM PT game in Provo reads 7:00 PM once she's there.
+const PT = 'America/Los_Angeles', HERE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+function ptToLocal(date, time) {
+  const [y, mo, d] = date.split('-').map(Number), [h, mi] = time.split(':').map(Number);
+  const guess = Date.UTC(y, mo - 1, d, h, mi);
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: PT, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }).formatToParts(new Date(guess)).map(x => [x.type, +x.value]));
+  const at = new Date(guess - (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - guess));
+  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+}
+GAMES.forEach(g => { if (g.time) { g.ptTime = g.time; g.time = ptToLocal(g.date, g.time); } });
+const zoneTag = () => HERE === PT ? '' : ' ' + (new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(new Date()).find(x => x.type === 'timeZoneName')?.value || '');
+const gameTime = g => g.time ? fmtTime(g.time) + zoneTag() : 'Time TBA';
 const vsAt = g => g.home ? 'vs' : '@';
 // Plain minutes since midnight (toMin is shifted for bedtimes, so not used here).
 const dayMin = t => +t.slice(0, 2) * 60 + +t.slice(3, 5);
-// Short game-day line, different each game, never "IT'S GAME DAY".
-const HYPE = ['Lock in', 'Go get it, #11', 'Trust the work', 'Your night', 'Go hoop', 'Leave it all out there', 'Play free', 'Let it fly'];
-const hype = g => HYPE[[...g.date].reduce((a, c) => a + c.charCodeAt(0), 0) % HYPE.length].replace('#11', '#' + (profile()?.number || '11'));
+// Game-day nudge, shown when she taps the card: just the one thing that matters
+// right now, timed back from tip-off (standard sports-dietitian timing: carb-heavy,
+// low-fat meal 3-4 h out, a small carb snack ~1 h out, carbs + protein within an
+// hour after). It leans on her own logs: what she ate before past games, foods she
+// eats a lot, foods her stomach logs flag (skipped), and her recent water/protein.
+const dayClock = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+function herFoods(test, bad) {
+  const by = new Map();
+  db.list('entries').filter(e => e.date >= addDays(dateStr(), -45) && !bad.has(e.name)).forEach(e => { const x = by.get(e.name) || { n: 0, m: e.macros }; x.n++; by.set(e.name, x); });
+  return [...by.entries()].filter(([, x]) => x.n >= 2 && test(x.m)).sort((a, b) => b[1].n - a[1].n).map(([n]) => n).slice(0, 4);
+}
+function gameNudge(date, g) {
+  const t = dateStr(), tip = dayMin(g.time), now = date === t ? dayMin(timeStr()) : -1;
+  const seed = [...g.date].reduce((a, c) => a + c.charCodeAt(0), 0);
+  const pick = (list, k = 0) => list[(seed + k) % list.length];
+  const at = m => fmtTime(dayClock(Math.max(0, m)));
+  const bad = new Set([...gutSuspects().values()].map(f => f.name));
+  const gl = goals(), recent = Array.from({ length: 7 }, (_, i) => addDays(t, -1 - i));
+  const avg = xs => xs.length ? xs.reduce((a, x) => a + x, 0) / xs.length : null;
+  const water = avg(recent.map(d => db.get('days', d)?.water).filter(x => x != null));
+  const prot = avg(recent.map(d => db.list('entries').filter(e => e.date === d)).filter(e => e.length).map(e => sumMacros(e.map(x => x.macros)).p));
+  const lastNight = db.get('days', date)?.sleepMin;
+  // What she ate 2.5-5 h before earlier tip-offs this season, best first.
+  const before = new Map();
+  GAMES.filter(x => x.time && x.date < t).forEach(x => db.list('entries').filter(e => e.date === x.date && e.time && !bad.has(e.name)
+    && dayMin(x.time) - dayMin(e.time) >= 150 && dayMin(x.time) - dayMin(e.time) <= 300 && (e.macros?.c || 0) >= 40)
+    .forEach(e => before.set(e.name, (before.get(e.name) || 0) + 1)));
+  const usual = [...before.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  const meal = usual || pick([...herFoods(m => m.c >= 45 && m.f <= 22 && m.cal >= 350, bad), 'GF pasta with chicken', 'a big rice bowl', 'a baked potato with turkey'], 1);
+  const snack = pick([...herFoods(m => m.c >= 15 && m.f <= 6 && m.cal <= 300, bad), 'a banana', 'GF pretzels', 'applesauce', 'a rice cake with honey'], 2);
+  const lowP = prot != null && prot < gl.p * 0.9;
+  const refuel = pick([...herFoods(m => m.p >= 25 && m.c >= 30, bad), 'chocolate milk', 'a GF turkey wrap', 'a rice bowl with chicken'], 3);
+  // Already ate in the meal window today? Then skip ahead.
+  const ateMeal = date === t && db.list('entries').some(e => e.date === t && e.time && dayMin(e.time) >= tip - 300 && dayMin(e.time) <= tip - 120 && (e.macros?.c || 0) >= 40);
+  const steps = [
+    [-1e4, tip - 240, 'next', '🍝', usual ? `Game meal around ${at(tip - 240)}. You had ${esc(meal)} before past games, so stick with it.` : pick([`Game meal around ${at(tip - 240)}. ${esc(meal)} would be perfect.`, `Plan your game meal for ~${at(tip - 240)}: ${esc(meal)}, heavy on the carbs.`, `${at(tip - 240)}-ish: fuel up with ${esc(meal)}.`])
+      + (lastNight && lastNight < sleepGoal() - 45 ? ` Short night (${fmtSleep(lastNight)}), so a 20-min nap early afternoon can help.` : '')],
+    [tip - 240, tip - 180, 'now', '🍝', ateMeal ? 'Game meal logged ✓ Next: water this afternoon.' : usual ? `Game meal time: ${esc(meal)}, like before your other games.` : pick([`Game meal time! ${esc(meal)}: big on carbs, easy on fat.`, `Eat now so it's digested by tip-off. ${esc(meal)} 👌`, `Fuel window is open: ${esc(meal)}.`], 4)],
+    [tip - 180, tip - 75, 'now', '💧', water != null && water < gl.water * 0.85 ? `You've averaged ${fmt(water)} oz lately (goal ${fmt(gl.water)}). Finish a full bottle before you leave.` : pick(['Keep a water bottle on you this afternoon.', "Sip, don't chug: a few cups before warmups.", 'Hydration check 💧 Finish a bottle before you leave.'], 5)],
+    [tip - 75, tip - 30, 'now', '🍌', pick([`Quick snack: ${esc(snack)}.`, `Little top-off before warmups: ${esc(snack)}.`, `Grab ${esc(snack)} now for fast energy.`], 6)],
+    [tip - 30, tip + 120, 'now', '🔥', `Go get it, #${esc(profile()?.number || '11')}.`],
+    [tip + 120, tip + 180, 'now', '🥛', lowP ? `Refuel within the hour: ${esc(refuel)}. Your protein's been under goal this week, so go big on it.` : pick([`Refuel within the hour: ${esc(refuel)}.`, `Recovery starts now: ${esc(refuel)} (carbs + protein).`, `Post-game fuel: ${esc(refuel)}.`], 8)],
+  ];
+  const st = now < 0 ? steps[0] : steps.find(([a, b]) => now >= a && now < b);
+  if (!st) return '<div class="gn"><span class="gn-e">✅</span><span class="grow">That\'s game day done. Sleep is the best recovery tonight.</span></div>';
+  return `<div class="gn"><span class="gn-e">${st[3]}</span><span class="grow">${st[4]}</span>${st[2] === 'now' && now >= 0 ? '<span class="gp-now">Now</span>' : ''}</div>`;
+}
 function tipIn(g) {
   const m = dayMin(g.time) - dayMin(timeStr());
   return m > 0 ? `Tip-off in ${m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m} min`}` : m > -120 ? 'Game on 🔥' : '';
@@ -466,12 +522,13 @@ function gameBanner(date) {
   const g = gameOn(date);
   if (g) {
     const plan = !g.result && g.time && date >= dateStr();
-    if (plan && date === dateStr() && !ui.gameSeen) { ui.gameSeen = true; setTimeout(() => celebrate(`${hype(g)} 🏀`), 600); }
-    return `<section class="game-banner ${plan ? 'gd' : ''}"><div class="gb-head">
+    if (plan && date === dateStr() && !ui.gameSeen) { ui.gameSeen = true; setTimeout(() => celebrate(`Game day 🏀 ${vsAt(g)} ${g.opp}`), 600); }
+    return `<section class="game-banner ${plan ? 'gd' : ''}" ${plan ? 'data-act="gameTip" role="button"' : ''}><div class="gb-head">
     <img class="team-logo" src="${teamLogo(g)}" alt="">
     <div class="grow"><div class="gb-k">🏀 Game day${plan && date === dateStr() && tipIn(g) ? ` · ${tipIn(g)}` : ''}</div><div class="gb-t">${vsAt(g)} ${esc(g.opp)}</div>
-    <div class="gb-s">${g.result ? esc(g.result) : gameTime(g)} · ${esc(g.venue || g.where)}</div></div></div>
-  </section>`;
+    <div class="gb-s">${g.result ? esc(g.result) : gameTime(g)} · ${esc(g.venue || g.where)}</div></div>
+    ${plan ? `<span class="gb-tap">${ui.gameTip ? '✕' : "🍽️ What's next"}</span>` : ''}</div>
+    ${plan && ui.gameTip ? gameNudge(date, g) : ''}</section>`;
   }
   const n = nextGame(addDays(date, 1));
   if (!n || date < dateStr()) return '';
@@ -888,8 +945,8 @@ function notifyItems() {
     if (i > 0 || at > timeStr()) items.push({ id: 'bed-' + d, date: d, at, ttl: 1800, keep: 30 + sleepGoal(), title: '🌙 Bedtime in 30 min', body: `Bed by ${fmtTime(b)} to get your sleep in.` });
   }
   if (nOn('n_game')) GAMES.filter(g => g.date >= t).slice(0, 10).forEach(g =>
-    items.push({ id: 'game-' + g.date, date: g.date, at: g.time && g.time < '12:00' ? hmMinus(g.time, 180) : '09:00', ttl: 10800, keep: 900, title: `🏀 ${vsAt(g)} ${g.opp} · ${gameTime(g)}`, body: `${hype(g)} 🔥` }));
-  if (nOn('n_week')) { const dow = parseDate(t).getDay(), sun = addDays(t, (7 - dow) % 7); items.push({ id: 'week-' + sun, date: sun, at: '18:00', ttl: 10800, keep: 360, title: '📊 Your week', body: 'Sleep, recovery and fueling, all in one card.' }); }
+    items.push({ id: 'game-' + g.date, date: g.date, at: g.time && g.time < '12:00' ? hmMinus(g.time, 180) : '09:00', ttl: 10800, keep: 900, title: '🏀 GAME DAY', body: `${vsAt(g)} ${g.opp} · ${gameTime(g)}${g.venue ? ` · ${g.venue}` : ''}` }));
+  if (nOn('n_week')) { const dow = parseDate(t).getDay(), sun = addDays(t, (7 - dow) % 7); items.push({ id: 'week-' + sun, date: sun, at: '18:00', ttl: 10800, keep: 360, open: 'wrapped', title: '📊 Your week', body: 'Sleep, recovery and fueling, all in one card.' }); }
   const meds = medList();
   if (nOn('n_meds') && meds.length) {
     const taken = db.get('days', t)?.meds || {}, am = meds.filter(m => medWhen(m) !== 'Night'), pm = meds.filter(m => medWhen(m) === 'Night');
@@ -1036,7 +1093,7 @@ function weekCard(date) {
       ${good[0] ? `<div class="fact"><span>✅</span><div><b>Went well:</b> ${good[0]}</div></div>` : ''}
       ${tryNext[0] ? `<div class="fact"><span>🎯</span><div><b>Try this week:</b> ${tryNext[0]}</div></div>` : ''}
     </div>
-    <button class="btn primary full" data-act="wrapped" data-from="${range[0]}" data-to="${range[1]}">▶ Watch your week</button>
+    ${parseDate(date).getDay() === 0 ? `<button class="btn primary full" data-act="wrapped" data-from="${range[0]}" data-to="${range[1]}">▶ Watch your week</button>` : ''}
     <button class="btn soft full mt" data-act="ask" data-q="How did my week go? What should I focus on this week?">✨ Ask Pulse about my week</button>
   </section>`;
 }
@@ -1611,7 +1668,7 @@ function screenTrends() {
   return `${header('Trends', streak() ? `🔥 ${streak()}-day logging streak` : '', `<button class="top-btn" data-act="calendar">${icon('calendar')} Calendar</button>`)}
   <div class="pad">
     ${askBar()}
-    <button class="wrapped-btn" data-act="wrapped"><span>▶</span><span class="grow"><b>Your last 7 days, Wrapped</b><small>Tap through your week</small></span></button>
+    ${parseDate(dateStr()).getDay() === 0 ? `<button class="wrapped-btn" data-act="wrapped"><span>▶</span><span class="grow"><b>Your last 7 days, Wrapped</b><small>Tap through your week</small></span></button>` : ''}
     <div class="seg range">${[7, 30, 90].map(r => `<button class="${ui.range === r ? 'on' : ''}" data-act="range" data-r="${r}">${r === 7 ? 'Week' : r === 30 ? 'Month' : '3 months'}</button>`).join('')}</div>
 
     <section class="card">
@@ -1918,6 +1975,7 @@ const acts = {
   ask: d => openAsk(d.q || ''),
   weekDone: d => saveProfile({ ['weekSeen-' + d.d]: true }),
   getIdeas: () => getIdeas(),
+  gameTip: () => { ui.gameTip = !ui.gameTip; buzz(); queueRender(); },
   wrapped: d => openWrapped(d.from || addDays(dateStr(), -7), d.to || addDays(dateStr(), -1)),
   jump: d => { const el = $('.card.' + d.to); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } },
 };
@@ -3106,6 +3164,9 @@ async function afterLogin(user) {
   if (needsSetup()) showWelcome(); else startApp();
 }
 
+// Tapping the Sunday "Your week" notification lands here and plays Wrapped.
+function openFromNote(what) { if (what === 'wrapped') setTimeout(() => acts.wrapped({}), 700); }
+navigator.serviceWorker?.addEventListener('message', e => openFromNote(e.data?.open));
 function startApp({ first = false } = {}) {
   applyTheme();
   appEl.classList.add('ready');
@@ -3114,6 +3175,7 @@ function startApp({ first = false } = {}) {
   if (DEMO) document.body.insertAdjacentHTML('beforeend', '<div class="demo-tag">Sample data</div>');
   navigator.storage?.persist?.();
   notify.clearStale(handledNotes());
+  if (new URLSearchParams(location.search).get('open') === 'wrapped') { openFromNote('wrapped'); history.replaceState(null, '', location.pathname); }
   notify.isOn().then(on => { ui.notifyOn = on; if (ui.tab === 'me') queueRender(); });
   refreshResults();
   scheduleNotify();

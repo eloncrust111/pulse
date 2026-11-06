@@ -1,6 +1,6 @@
 // Offline support. App files: network first (so updates show up right away),
 // falling back to cache. Libraries from CDNs: cache first.
-const CACHE = 'pulse-v23';
+const CACHE = 'pulse-v24';
 const SHELL = ['./', 'index.html', 'styles.css', 'config.js', 'manifest.webmanifest',
   'js/app.js', 'js/db.js', 'js/util.js', 'js/charts.js', 'js/patterns.js', 'js/lookup.js', 'js/sync.js', 'js/share-image.js', 'js/games.js', 'js/health.js', 'js/notify.js', 'js/demo.js',
   'icons/icon-192.png', 'icons/apple-touch-icon.png'];
@@ -76,7 +76,7 @@ self.addEventListener('push', e => {
     const due = await dueNow(), win = await newWin();
     if (win) due.push(win);
     if (!due.length) due.push({ id: 'pulse', keep: 30, title: 'Pulse', body: 'Tap to open' });
-    for (const i of due) await reg.showNotification(i.title, { body: i.body, tag: i.close ? 'wish' : i.id, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { at: Date.now(), until: Date.now() + (i.keep || 720) * 60e3 } });
+    for (const i of due) await reg.showNotification(i.title, { body: i.body, tag: i.close ? 'wish' : i.id, icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { at: Date.now(), open: i.open, until: Date.now() + (i.keep || 720) * 60e3 } });
     // The 11:11 one only stays for its minute.
     const wish = due.find(i => i.close);
     if (wish) { await wait(wish.close * 1000); (await reg.getNotifications({ tag: 'wish' })).forEach(n => n.close()); }
@@ -85,6 +85,10 @@ self.addEventListener('push', e => {
 
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list =>
-    list.length ? list[0].focus() : self.clients.openWindow('./')));
+  const open = e.notification.data?.open;
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+    if (!list.length) return self.clients.openWindow(open ? './?open=' + open : './');
+    if (open) list[0].postMessage({ open });
+    return list[0].focus();
+  }));
 });

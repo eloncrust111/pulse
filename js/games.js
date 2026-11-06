@@ -1,5 +1,5 @@
 // Portland Pilots women's basketball, 2026-27 regular season.
-// From https://portlandpilots.com/sports/womens-basketball/schedule (posted times; away games may be local time there).
+// From https://portlandpilots.com/sports/womens-basketball/schedule (all posted times are Pacific; the app shows them in her phone's time zone).
 export const SEASON = '2026-27';
 export const GAMES = [
   {"date": "2026-11-02", "opp": "Willamette", "logo": "willamette", "home": true, "where": "Portland, Ore.", "venue": "Chiles Center", "time": null, "result": "W 107-29"},
