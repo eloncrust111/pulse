@@ -968,16 +968,18 @@ const NOTIFS = [
   ['n_period', '🌸 Period heads-up', 'The evening before it might start. The lock screen just says "Heads-up".', false],
 ];
 const hmMinus = (t, m) => { const x = +t.slice(0, 2) * 60 + +t.slice(3) - m; return `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}`; };
-const medsAm = () => profile()?.medsAm || profile()?.medsTime || '09:00';
+// Morning meds remind between 5 AM and 1 PM only; anything else saved (old versions
+// stored other values) falls back to 9 AM, so the reminder can't fire overnight.
+const medsAm = () => [profile()?.medsAm, profile()?.medsTime].find(v => /^\d{2}:\d{2}$/.test(v || '') && v >= '05:00' && v <= '13:00') || '09:00';
 const medsPm = () => profile()?.medsPm || '20:00';
 const nOn = k => profile()?.[k] ?? NOTIFS.find(n => n[0] === k)[3];
 function notifyItems() {
   const t = dateStr(), items = [];
   // Easter egg: no setting for this one.
   items.push({ id: 'wish', at: '11:11', ttl: 60, close: 60, keep: 1, title: '11:11', body: '🌠' });
-  if (nOn('n_bed')) for (let i = 0; i < 8; i++) {
-    const d = addDays(t, i), b = bedGoal(d), at = fromMin(toMin(b) - 30);
-    if (i > 0 || at > timeStr()) items.push({ id: 'bed-' + d, date: d, at, ttl: 1800, keep: 30 + sleepGoal(), title: '🌙 Bedtime in 30 min', body: `Bed by ${fmtTime(b)} to get your sleep in.` });
+  if (nOn('n_bed')) for (let i = -1; i < 8; i++) {
+    const d = addDays(t, i), b = bedGoal(d), at = fromMin(toMin(b) - 30), on = at < '12:00' ? addDays(d, 1) : d;
+    if (on > t || (on === t && at > timeStr())) items.push({ id: 'bed-' + d, date: on, at, ttl: 1800, keep: 30 + sleepGoal(), title: '🌙 Bedtime in 30 min', body: `Bed by ${fmtTime(b)} to get your sleep in.` });
   }
   if (nOn('n_game')) GAMES.filter(g => g.date >= t).slice(0, 10).forEach(g =>
     items.push({ id: 'game-' + g.date, date: g.date, at: g.time && g.time < '12:00' ? hmMinus(g.time, 180) : '09:00', ttl: 10800, keep: 900, title: '🏀 GAME DAY', body: `${vsAt(g)} ${g.opp} · ${gameTime(g)}${g.venue ? ` · ${g.venue}` : ''}` }));
@@ -3279,7 +3281,9 @@ function startApp({ first = false } = {}) {
   applyTheme();
   appEl.classList.add('ready');
   render();
-  splash(first);
+  let quiet = false;
+  try { quiet = !!sessionStorage.getItem('pulseQuiet'); sessionStorage.removeItem('pulseQuiet'); } catch {}
+  if (!quiet || first) splash(first);
   if (DEMO) document.body.insertAdjacentHTML('beforeend', '<div class="demo-tag">Sample data</div>');
   navigator.storage?.persist?.();
   notify.clearStale(handledNotes());
@@ -3291,6 +3295,30 @@ function startApp({ first = false } = {}) {
 }
 
 // A short personal hello each time the app opens.
+// A different welcome-back line each launch: usually something real from her logs,
+// sometimes a plain line for the time of day. Never the same one twice in a row.
+function welcomeLine({ n, preps, todayCal }) {
+  const t = dateStr(), y = addDays(t, -1), day = db.get('days', t) || {}, g = goals(), h = new Date().getHours();
+  const yEat = sumMacros(dayEntries(y).map(e => e.macros)), ng = nextGame(addDays(t, 1));
+  const ngDays = ng ? Math.round((parseDate(ng.date) - parseDate(t)) / 864e5) : 99;
+  const real = [
+    n >= 2 && `🔥 ${n} days logged in a row`,
+    preps >= 1 && `🥡 ${fmt(preps)} meal-prep container${preps === 1 ? '' : 's'} ready`,
+    todayCal && `${fmt(todayCal)} cal logged so far today`,
+    day.sleepMin && `😴 Last night: ${fmtSleep(day.sleepMin)}`,
+    day.recovery != null && `💚 ${fmt(day.recovery)}% recovery today`,
+    ngDays <= 6 && `🏀 Next game: ${ngDays === 1 ? 'tomorrow' : parseDate(ng.date).toLocaleDateString(undefined, { weekday: 'long' })} ${vsAt(ng)} ${esc(ng.opp)}`,
+    dayEntries(y).length && yEat.p >= g.p && '✓ Hit your protein goal yesterday',
+    (db.get('days', y)?.water || 0) >= g.water && '💧 Hit your water goal yesterday',
+  ].filter(Boolean);
+  const plain = h < 5 ? ['Late one. Sleep soon', 'Up late'] : h < 12 ? ['Have a good day', 'Water first', 'Morning'] : h < 17 ? ['Hope the day is going well', "Don't skip lunch", 'Afternoon check-in'] : ['Hope today went well', 'Wind down when you can', 'Evening check-in'];
+  let last = '';
+  try { last = localStorage.getItem('pulseLastHello') || ''; } catch {}
+  const pool = (real.length && Math.random() < 0.75 ? real : plain).filter(x => x !== last);
+  const pick = pool[Math.floor(Math.random() * pool.length)] || plain[0];
+  try { localStorage.setItem('pulseLastHello', pick); } catch {}
+  return pick;
+}
 function splash(first) {
   const name = (profile()?.name || '').trim().split(/\s+/)[0];
   const t = dateStr(), n = streak(), preps = activePreps().reduce((s, p) => s + p.left, 0);
@@ -3300,10 +3328,7 @@ function splash(first) {
     : now === '11:11' ? '🌠 11:11'
     : recentWin(t) ? `🏆 Congrats on the win ${vsAt(recentWin(t))} ${esc(recentWin(t).opp)}!`
     : gm ? `🏀 Game day ${vsAt(gm)} ${esc(gm.opp)} · ${gameTime(gm)}`
-    : n >= 2 ? `🔥 ${n} days logged in a row`
-    : preps >= 1 ? `🥡 ${fmt(preps)} meal-prep container${preps === 1 ? '' : 's'} ready`
-    : todayCal ? `${fmt(todayCal)} cal logged so far today`
-    : 'Ready when you are';
+    : welcomeLine({ n, preps, todayCal });
   const el = document.createElement('div');
   el.className = 'splash';
   el.innerHTML = `<div class="splash-in">${num ? `<div class="splash-num">${esc(num)}</div>` : ''}<img src="icons/icon-192.png" alt="">
@@ -3338,7 +3363,7 @@ function splash(first) {
   addEventListener('touchend', () => {
     if (y0 == null) return;
     y0 = null;
-    if (dy > 120) { ptr.classList.add('go'); buzz(); setTimeout(() => location.reload(), 350); }
+    if (dy > 120) { ptr.classList.add('go'); buzz(); try { sessionStorage.setItem('pulseQuiet', '1'); } catch {} setTimeout(() => location.reload(), 350); }
     else ptr.style.transform = '';
   });
 })();
