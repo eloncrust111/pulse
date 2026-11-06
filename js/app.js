@@ -173,7 +173,7 @@ function macroBar(label, k, v, goal) {
   const pct = Math.min(100, (v / (goal || 1)) * 100), left = goal - v;
   return `<div class="mb"><div class="mb-top"><span>${label}</span><span><b>${fmt(v)}</b> / ${fmt(goal)}g</span></div>
     <div class="mb-track"><i class="bg-${k}" style="width:${pct}%"></i></div>
-    <div class="mb-left">${left > 0.5 ? fmt(left) + 'g left' : 'Goal hit ✓'}</div></div>`;
+    <div class="mb-left">${left > 0.5 ? fmt(left) + 'g to go' : 'Goal hit ✓'}</div></div>`;
 }
 
 // ---------- data helpers ----------
@@ -188,13 +188,30 @@ function itemFor(kind, obj) {
     servingLabel: info.servingG ? 'serving' : '', photo: obj.photo };
 }
 
-function lastGrams(kind, id) {
+function lastEntry(kind, id) {
   let best = null;
   for (const e of db.list('entries')) {
     if (e.kind === kind && e.refId === id && (!best || (e.date + e.time) > (best.date + best.time))) best = e;
   }
-  return best?.grams ?? null;
+  return best;
 }
+const lastGrams = (kind, id) => lastEntry(kind, id)?.grams ?? null;
+// How many pieces are in one serving: typed in, or read off the serving name
+// ("2 slices", "about 13 pieces", "16 crackers"). Measuring words don't count.
+const MEASURE = /^(cups?|c|tbsps?|tablespoons?|tsps?|teaspoons?|oz|ounces?|fl|g|grams?|ml|l|lbs?|pounds?|servings?|scoops?|packets?|bottles?|cans?|containers?)$/i;
+function pieceInfo(food) {
+  if (!food || !(num(food.servingG) > 0)) return null;
+  let found = null;
+  for (const m of String(food.servingLabel || '').matchAll(/(\d+(?:\.\d+)?)\s+([a-z][a-z-]*)/gi)) {
+    if (MEASURE.test(m[2]) || !(+m[1] > 0)) continue;
+    const w = m[2].toLowerCase();
+    found = { n: +m[1], word: /s$/.test(w) ? w : /[^aeiou]y$/.test(w) ? w.slice(0, -1) + 'ies' : w + 's' };
+    break;
+  }
+  if (num(food.pieces) > 0) return { n: num(food.pieces), word: found?.word || 'pieces' };
+  return found;
+}
+const pieceName = (n, word) => n === 1 ? word.replace(/ies$/, 'y').replace(/(?<!s)s$/, '') : word;
 
 // A food's own tags, or ones guessed from its name if none were set.
 function foodTags(f) {
@@ -321,10 +338,10 @@ function screenToday() {
   </header>
   <section class="card hero">
     <div class="hero-row">
-      <div class="hero-ring">${ring(t.cal, g.cal)}<div class="ring-center"><div class="big">${fmt(Math.abs(left))}</div><div class="small">${left >= 0 ? 'cal left' : 'cal over'}</div></div></div>
+      <div class="hero-ring">${ring(t.cal, g.cal)}<div class="ring-center"><div class="big">${fmt(t.cal)}</div><div class="small">of ${fmt(g.cal)} cal</div></div></div>
       <div class="hero-side">
-        <div class="kv"><span>Eaten</span><b>${fmt(t.cal)}</b></div>
         <div class="kv"><span>Goal</span><b>${fmt(g.cal)}</b></div>
+        <div class="kv"><span>${left > 0 ? 'To go' : 'Goal'}</span><b>${left > 0 ? fmt(left) : 'Hit ✓'}</b></div>
         ${day.burned ? `<div class="kv"><span>Burned</span><b>${fmt(day.burned)}</b></div>` : ''}
         ${tracks('fiber') ? `<div class="kv"><span>Fiber</span><b>${fmt(t.fiber)}<small>/${fmt(g.fiber)}g</small></b></div>` : ''}
       </div>
@@ -332,6 +349,7 @@ function screenToday() {
     <div class="mbs">${macroBar('Protein', 'p', t.p, g.p)}${tracks('c') ? macroBar('Carbs', 'c', t.c, g.c) : ''}${tracks('f') ? macroBar('Fat', 'f', t.f, g.f) : ''}</div>
   </section>
   ${goalRings(d, day, t, g)}
+  ${fuelCard(d, day, t, g, ents)}
   ${winCard(d)}
   ${readinessCard(d)}
   ${weekCard(d)}
@@ -1408,7 +1426,7 @@ function openAsk(q = '') {
 // ---------- tour ----------
 // A quick look around after setup: one spotlight at a time, two lines each.
 const TOUR = [
-  ['.hero', "Today's numbers", 'Calories left and protein so far. Fills in as you log food.'],
+  ['.hero', "Today's numbers", 'Calories and protein so far, out of your goal. Fills in as you log food.'],
   ['#fab', 'Log food', 'Search, scan a barcode, use a recipe, or snap a photo of your plate.'],
   ['.rings', 'Daily rings', 'Protein, water, sleep and meds. Tap one to jump to it.'],
   ['.game-banner, .next-game', 'Games', 'Your next game shows up here. On game day, tap it to see what to eat next.'],
@@ -1588,12 +1606,24 @@ function mealCard(m, ents, date) {
     <div class="meal-head"><div class="meal-title"><span class="meal-ico">${m.icon}</span>${m.name}</div>${ents.length ? `<div class="meal-cal">${fmt(tot.cal)} cal</div>` : ''}</div>
     ${ents.map(e => `<button class="entry" data-act="editEntry" data-id="${e.id}">
         <div class="e-main"><div class="e-name">${esc(e.name)}</div>
-        <div class="e-sub">${e.grams ? fmt(e.grams) + ' g · ' : ''}${macroLine(e.macros)}</div></div>
+        <div class="e-sub">${e.pcs ? `${fmt(e.pcs)} ${esc(pieceName(e.pcs, e.pcsWord || 'pieces'))} · ` : e.grams ? fmt(e.grams) + ' g · ' : ''}${macroLine(e.macros)}</div></div>
         <div class="e-cal">${fmt(e.macros.cal)}</div></button>`).join('')}
     <div class="meal-actions">
       <button class="add-btn" data-act="add" data-meal="${m.id}">＋ Add food</button>
       ${yest ? `<button class="ghost-btn" data-act="copyMeal" data-meal="${m.id}">↺ Same as yesterday</button>` : ''}
     </div></section>`;
+}
+
+// Evening heads-up when she's well under her calories on a day she trained or played.
+// Only for today, only once something is logged (an empty day just means nothing logged).
+function fuelCard(d, day, t, g, ents) {
+  if (d !== dateStr() || !ents.length || !g.cal) return '';
+  const h = +timeStr().slice(0, 2), hard = actsOf(day).some(a => a !== 'rest') || gameOn(d);
+  const low = hard ? h >= 17 && t.cal < g.cal * 0.6 : h >= 20 && t.cal < g.cal * 0.5;
+  if (!low) return '';
+  return `<section class="card fuel-card"><div class="fuel-t">⚡ Low on fuel today</div>
+    <p class="small">${fmt(t.cal)} of ${fmt(g.cal)} cal${hard ? ` on a ${gameOn(d) ? 'game' : 'training'} day` : ''}. A real meal or snack tonight helps you recover and sleep.</p>
+    <button class="btn soft full" data-act="add">＋ Log food</button></section>`;
 }
 
 function waterCard(day, g) {
@@ -2253,12 +2283,18 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
 function openAmount({ item, entry = null, prep = null, meal, date, onAdded }) {
   let unit = 'g', curMeal = meal;
   if (!prep && entry?.prepId) prep = db.get('preps', entry.prepId);
+  const food = item.kind === 'food' && !prep ? getFood(item.id) : null;
+  let pi = pieceInfo(food);
+  const last = food ? lastEntry('food', item.id) : null;
+  // Counted foods open in pieces if that's how she logged them last time.
+  if (pi && (entry ? entry.pcs : last?.pcs)) unit = 'pc';
+  const per = u => u === 'g' ? 1 : u === 's' ? item.servingG : item.servingG / pi.n;
   // She weighs almost everything, so a new food opens empty, ready for the scale's number.
   const startG = entry ? entry.grams : prep ? prep.gramsEach : '';
   const quick = [];
   const lg = prep ? null : lastGrams(item.kind, item.id);
   if (prep) quick.push([prep.gramsEach, `1 container · ${fmt(prep.gramsEach)} g`], [prep.gramsEach / 2, '½ container']);
-  if (lg) quick.push([lg, `Last time · ${fmt(lg)} g`]);
+  if (lg) quick.push([lg, last?.pcs && pi ? `Last time · ${fmt(last.pcs)} ${esc(pieceName(last.pcs, pi.word))}` : `Last time · ${fmt(lg)} g`]);
   if (item.servingG && !prep) {
     const sl = item.kind === 'food' && item.servingLabel ? item.servingLabel : 'serving';
     quick.push([item.servingG, `${/^\d/.test(sl) ? '' : '1 '}${esc(sl)} · ${fmt(item.servingG)} g`]);
@@ -2270,8 +2306,10 @@ function openAmount({ item, entry = null, prep = null, meal, date, onAdded }) {
     body: `<div class="amt-food">${thumb(item.photo, item.kind === 'recipe' ? '🍲' : '🥣')}<div><div class="amt-name">${esc(item.name)}</div><div class="muted small">${esc(item.brand || '')}</div></div></div>
       ${gfWarning(item.kind, item.kind === 'food' ? getFood(item.id) : db.get('recipes', item.id))}
       ${sus ? `<p class="tip">⚠️ Heads up: stomach trouble followed this ${sus.hit} of the ${sus.eaten} times you had it.</p>` : ''}
-      <div class="amt-input"><input id="amt" type="text" inputmode="decimal" value="${startG === '' ? '' : fmtIn(startG)}" placeholder="0" autocomplete="off" aria-label="Amount">
-        <div class="seg unit">${`<button data-x="unit" data-u="g" class="on">grams</button>`}${item.servingG ? `<button data-x="unit" data-u="s">${prep ? 'containers' : 'servings'}</button>` : ''}</div></div>
+      <div class="amt-input"><input id="amt" type="text" inputmode="decimal" value="${startG === '' ? '' : fmtIn(unit === 'pc' ? entry.pcs : startG)}" placeholder="0" autocomplete="off" aria-label="Amount">
+        <div class="seg unit"><button data-x="unit" data-u="g" class="${unit === 'g' ? 'on' : ''}">grams</button>${food && item.servingG ? `<button data-x="unit" data-u="pc" class="${unit === 'pc' ? 'on' : ''}">${pi ? esc(pi.word) : 'pieces'}</button>` : ''}${item.servingG ? `<button data-x="unit" data-u="s">${prep ? 'containers' : 'servings'}</button>` : ''}</div></div>
+      <div class="pc-ask" id="pcAsk" hidden><label for="pcN">How many pieces in one serving (${fmt(item.servingG)} g)? It's on the label.</label>
+        <div class="pc-row"><input id="pcN" inputmode="decimal" placeholder="e.g. 13"><button class="btn primary" data-x="pcSave">OK</button></div></div>
       <div class="chips">${quick.map(([g, l]) => `<button class="chip sm" data-x="q" data-g="${g}">${l}</button>`).join('')}</div>
       <div class="amt-prev" id="prev"></div>
       <div class="field"><label>Meal</label><div class="chips">${MEALS.map(m => `<button class="chip ${m.id === meal ? 'on' : ''}" data-x="meal" data-m="${m.id}">${m.icon} ${m.name}</button>`).join('')}</div></div>
@@ -2279,23 +2317,36 @@ function openAmount({ item, entry = null, prep = null, meal, date, onAdded }) {
     footer: `${entry ? `<button class="btn ghost danger-t" data-x="del">Delete</button>` : ''}<button class="btn primary grow" data-x="save" id="saveBtn"></button>`,
   });
   const inp = s.$('#amt');
-  const grams = () => unit === 'g' ? num(inp.value) : num(inp.value) * item.servingG;
+  const grams = () => num(inp.value) * per(unit);
   function update() {
     const g = grams(), m = scale(item.per, g);
     s.$('#prev').innerHTML = !g && unit === 'g' ? `<div class="prev-cal">Type what the scale says</div>` : `<div class="prev-cal"><b>${fmt(m.cal)}</b> cal</div>
       <div class="prev-m"><div><b class="mp">${fmt(m.p)}g</b><span>protein</span></div><div><b class="mc">${fmt(m.c)}g</b><span>carbs</span></div><div><b class="mf">${fmt(m.f)}g</b><span>fat</span></div><div><b>${fmt(m.fiber)}g</b><span>fiber</span></div></div>
-      ${unit === 's' ? `<div class="muted tiny center">= ${fmt(g)} g</div>` : ''}`;
+      ${unit !== 'g' ? `<div class="muted tiny center">= ${fmt(g)} g</div>` : ''}`;
     s.$('#saveBtn').textContent = entry ? 'Save' : `Add to ${mealById(curMeal).name}`;
   }
   s.on('input', '#amt', update);
-  s.on('click', '[data-x="unit"]', el => {
+  const setUnit = u => {
     const g = grams();
-    unit = el.dataset.u;
-    s.$$('[data-x="unit"]').forEach(b => b.classList.toggle('on', b === el));
-    inp.value = fmtIn(unit === 'g' ? g : g / item.servingG);
-    update();
+    unit = u;
+    s.$$('[data-x="unit"]').forEach(b => b.classList.toggle('on', b.dataset.u === u));
+    if (g) inp.value = fmtIn(g / per(unit));
+    update(); inp.focus();
+  };
+  s.on('click', '[data-x="unit"]', el => {
+    // First time counting this food: ask once how many pieces make a serving.
+    if (el.dataset.u === 'pc' && !pi) { s.$('#pcAsk').hidden = false; return s.$('#pcN').focus(); }
+    setUnit(el.dataset.u);
   });
-  s.on('click', '[data-x="q"]', el => { const g = num(el.dataset.g); inp.value = fmtIn(unit === 'g' ? g : g / item.servingG); update(); });
+  s.on('click', '[data-x="pcSave"]', () => {
+    const n = num(s.$('#pcN').value);
+    if (!(n > 0)) return toast('Type how many pieces');
+    db.put('foods', { ...getFood(item.id), pieces: n });
+    pi = { n, word: 'pieces' };
+    s.$('#pcAsk').hidden = true;
+    setUnit('pc');
+  });
+  s.on('click', '[data-x="q"]', el => { inp.value = fmtIn(num(el.dataset.g) / per(unit)); update(); });
   s.on('click', '[data-x="meal"]', el => { curMeal = el.dataset.m; s.$$('[data-x="meal"]').forEach(b => b.classList.toggle('on', b === el)); update(); });
   // Eating from a meal-prep batch takes containers out of the fridge (and puts them back if removed).
   const usedOf = g => prep && prep.gramsEach ? g / prep.gramsEach : 0;
@@ -2310,6 +2361,7 @@ function openAmount({ item, entry = null, prep = null, meal, date, onAdded }) {
     const e = entry ? { ...entry } : { id: uid(), date, kind: item.kind, refId: item.id };
     Object.assign(e, { name: item.name, brand: item.kind === 'food' ? item.brand : '', grams: g, per: item.per,
       macros: scale(item.per, g), meal: curMeal, time: s.$('#etime').value || timeStr() });
+    if (unit === 'pc') Object.assign(e, { pcs: num(inp.value), pcsWord: pi.word }); else { delete e.pcs; delete e.pcsWord; }
     if (prep) { e.prepId = prep.id; adjustPrep(prep.id, -(usedOf(g) - (entry ? usedOf(entry.grams) : 0))); }
     db.put('entries', e);
     s.close();
@@ -2425,6 +2477,7 @@ function openFoodForm({ food = null, prefill = {}, onSaved } = {}) {
         ${fld('fiber', 'Fiber', 'g')}${fld('sugar', 'Total sugars', 'g')}${fld('sodium', 'Sodium', 'mg')}
       </div>
       <div class="calc-hint" id="hint"></div>
+      <div class="field"><label for="ff-pieces">Pieces per serving <span class="muted">— optional, for things you count</span></label><div class="unit-in"><input id="ff-pieces" data-k="pieces" inputmode="decimal" value="${esc(f.pieces ?? '')}" placeholder="${pieceInfo(f) ? fmt(pieceInfo(f).n) + ' (from the serving name)' : 'e.g. 13'}"><span>pcs</span></div></div>
       ${gfOn() ? `<h4 class="sec">🌾 Gluten <span class="muted">— check the allergen line on the label</span></h4>${gfPicker(f.gf)}` : ''}
       <h4 class="sec">Tags <span class="muted">— helps find stomach triggers</span></h4>
       <div class="chips">${TAGS.map(t => `<button class="chip sm ${tags.has(t) ? 'on' : ''}" data-x="tag" data-t="${esc(t)}">${esc(t)}</button>`).join('')}</div>

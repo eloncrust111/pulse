@@ -293,6 +293,13 @@ textarea { resize: vertical; }
 .amt-input { display: flex; gap: 10px; align-items: stretch; margin-bottom: 10px; }
 .amt-input input { font-size: 34px; font-weight: 800; text-align: center; flex: 1; min-width: 0; padding: 8px; }
 .seg.unit { flex-direction: column; width: 110px; flex: none; }
+.seg.unit button { padding: 7px 6px; }
+.pc-ask { background: var(--lav-3); border-radius: 14px; padding: 10px 12px; margin-bottom: 10px; font-size: 14px; }
+.pc-row { display: flex; gap: 8px; margin-top: 8px; }
+.pc-row input { flex: 1; min-width: 0; }
+.fuel-card { border-left: 4px solid var(--warn); }
+.fuel-t { font-weight: 800; font-size: 16px; }
+.fuel-card p { margin: 4px 0 10px; }
 .amt-prev { background: var(--card); border-radius: 18px; padding: 14px; margin: 14px 0; box-shadow: var(--shadow); }
 .prev-cal { text-align: center; font-size: 15px; color: var(--muted); }
 .prev-cal b { font-size: 30px; color: var(--text); letter-spacing: -.5px; }
