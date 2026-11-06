@@ -115,8 +115,8 @@ function openSheet({ title = '', body = '', footer = '', full = false, lock = fa
   };
   if (!lock) wrap.querySelector('.sheet-backdrop').onclick = () => api.close();
   api.on('click', '[data-x="close"]', () => api.close());
+  if (!sheets.length) lockScroll(true);
   sheets.push(api);
-  document.body.classList.add('noscroll');
   requestAnimationFrame(() => wrap.classList.add('open'));
   onMount?.(api);
   return api;
@@ -128,7 +128,13 @@ function closeSheet(api) {
   api.onClose?.();
   api.el.classList.remove('open');
   setTimeout(() => api.el.remove(), 280);
-  if (!sheets.length) document.body.classList.remove('noscroll');
+  if (!sheets.length) lockScroll(false);
+}
+let lockedY = 0;
+function lockScroll(on) {
+  const b = document.body;
+  if (on) { lockedY = scrollY; b.classList.add('noscroll'); b.style.top = `-${lockedY}px`; }
+  else { b.classList.remove('noscroll'); b.style.top = ''; scrollTo(0, lockedY); }
 }
 function closeAllSheets() { [...sheets].reverse().forEach(closeSheet); }
 
@@ -304,7 +310,7 @@ function screenToday() {
   const left = g.cal - t.cal;
   return `
   <header class="top today-top">
-    <div class="ask-pills"><button class="ask-pill" data-act="chat" aria-label="Chat with Pulse">💬 Chat</button><button class="ask-pill" data-act="ask" aria-label="Ask Pulse">✨ Ask</button></div>
+    <button class="ask-pill" data-act="ask" aria-label="Ask Pulse">✨ Ask</button>
     <div class="hello">${greeting()}, ${esc(firstName())}</div>
     <div class="datenav">
       <button class="dn-btn" data-act="day" data-n="-1" aria-label="Previous day">‹</button>
@@ -440,10 +446,38 @@ const winSeen = () => { try { return JSON.parse(localStorage.getItem('pulseWinSe
 function recentWin(date) {
   return [gameOn(date), gameOn(addDays(date, -1))].find(g => g?.result?.startsWith('W') && !winSeen().includes(g.date));
 }
+const winPartied = () => { try { return JSON.parse(localStorage.getItem('pulseWinParty') || '[]'); } catch { return []; } };
+const setWinPartied = d => { try { localStorage.setItem('pulseWinParty', JSON.stringify([...winPartied(), d])); } catch {} };
+// Full-screen final score the first time she opens the app after a W.
+function winScreen(g) {
+  if (document.querySelector('.winscreen')) return;
+  // Wait for the welcome splash to finish first.
+  if (document.querySelector('.splash')) return setTimeout(() => winScreen(g), 300);
+  const [us, them] = (g.result.match(/(\d+)-(\d+)/) || []).slice(1);
+  const el = document.createElement('div');
+  el.className = 'winscreen';
+  el.innerHTML = `<div class="ws-in">
+    <div class="ws-k">Final</div>
+    <div class="ws-board">
+      <div class="ws-team"><img src="icons/icon-192.png" alt=""><b>Pilots</b><span class="ws-score win">${us || 'W'}</span></div>
+      <div class="ws-dash">–</div>
+      <div class="ws-team"><img src="${teamLogo(g)}" alt=""><b>${esc(g.opp)}</b><span class="ws-score">${them || ''}</span></div>
+    </div>
+    <div class="ws-t">Pilots win 🏆</div>
+    <div class="ws-s">${g.home ? 'At home' : esc(g.where || '')} · ${parseDate(g.date).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</div>
+    <div class="ws-tap">Tap to close</div></div>`;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('on'));
+  celebrate('', true);
+  setTimeout(() => celebrate('', true), 900);
+  const close = () => { el.classList.remove('on'); setTimeout(() => el.remove(), 350); };
+  el.addEventListener('click', close);
+  setTimeout(close, 7000);
+}
 function winCard(date) {
   const g = recentWin(date);
   if (!g) return '';
-  if (ui.winParty !== g.date) { ui.winParty = g.date; setTimeout(() => celebrate('Pilots win! 🏆', true), 500); }
+  if (!winPartied().includes(g.date)) { setWinPartied(g.date); setTimeout(() => winScreen(g), 400); }
   return `<section class="card win-card"><button class="pr-x" data-act="winDone" data-d="${g.date}" aria-label="Close">✕</button>
     <div class="win-big">🏆</div><div class="win-t">Pilots win!</div>
     <div class="win-s">${vsAt(g)} ${esc(g.opp)} · ${esc(g.result)}</div>
@@ -520,7 +554,8 @@ function tipIn(g) {
 }
 function gameBanner(date) {
   const g = gameOn(date);
-  if (g) {
+  // After a loss the card just moves on to the next game.
+  if (g && !g.result?.startsWith('L')) {
     const plan = !g.result && g.time && date >= dateStr();
     if (plan && date === dateStr() && !ui.gameSeen) { ui.gameSeen = true; setTimeout(() => celebrate(`Game day 🏀 ${vsAt(g)} ${g.opp}`), 600); }
     return `<section class="game-banner ${plan ? 'gd' : ''}" ${plan ? 'data-act="gameTip" role="button"' : ''}><div class="gb-head">
@@ -1068,7 +1103,7 @@ function weekStats([from, to]) {
     foodDays: tots.length, cal: avg(tots.map(t => t.cal)), protein: tots.filter(t => t.p >= g.p * 0.95).length,
     water: days.filter(d => d.water >= g.water).length, stomach: db.list('stomach').filter(e => e.date >= from && e.date <= to).length,
     train: days.reduce((a, d) => a + actsOf(d).filter(x => x !== 'rest').length, 0),
-    games: GAMES.filter(x => x.date >= from && x.date <= to && x.result).map(x => `${x.result.startsWith('W') ? 'W' : 'L'} ${vsAt(x)} ${x.opp}`),
+    games: GAMES.filter(x => x.date >= from && x.date <= to && x.result?.startsWith('W')).map(x => `W ${vsAt(x)} ${x.opp}`),
   };
 }
 function weekCard(date) {
@@ -1297,7 +1332,7 @@ function askContext() {
 }
 const ASK_IDEAS = ['Why was I tired this week?', "What's been upsetting my stomach?", 'How has my sleep been?', 'Am I eating enough on practice days?', 'What should I eat before the next game?'];
 function askBar() {
-  return `<section class="card ask-bar"><div class="ask-row"><button class="ask-open" data-act="ask"><span>✨</span><span class="grow">Ask Pulse anything about you</span></button><button class="ask-chat" data-act="chat" aria-label="Just talk">💬</button></div>
+  return `<section class="card ask-bar"><button class="ask-open" data-act="ask"><span>✨</span><span class="grow">Ask Pulse anything about you</span></button>
     <div class="ask-ideas">${ASK_IDEAS.slice(0, 3).map(q => `<button class="pr-tag" data-act="ask" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div></section>`;
 }
 // Bold headline, then bullets, so answers read at a glance.
@@ -1321,8 +1356,25 @@ function openAsk(q = '') {
   const s = openSheet({
     title: '✨ Ask Pulse', full: true,
     body: `<div id="chat" class="chat"></div>`,
-    footer: `<form class="ask-form" id="af"><input id="aq" placeholder="Ask about your sleep, food, stomach…" autocomplete="off" enterkeyhint="send"><button class="btn primary" aria-label="Send">↑</button></form>`,
+    footer: `<form class="ask-form" id="af"><button type="button" class="btn ghost mic" data-x="mic" aria-label="Talk"><svg class="mic-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/></svg></button><input id="aq" placeholder="Ask about your sleep, food, stomach…" autocomplete="off" enterkeyhint="send"><button class="btn primary" aria-label="Send">↑</button></form>`,
   });
+  // Mic: voice typing into the box; she still taps send. Without speech support
+  // (some home-screen apps) the keyboard's own dictation does the same.
+  let rec = null;
+  const stopMic = () => { if (rec) { const r = rec; rec = null; r.stop(); } s.$('[data-x="mic"]')?.classList.remove('on'); };
+  s.on('click', '[data-x="mic"]', () => {
+    if (rec) return stopMic();
+    const inp = s.$('#aq');
+    if (!Speech) { inp.focus(); return toast('Tap the mic on your keyboard and talk'); }
+    const base = inp.value.trim();
+    rec = new Speech();
+    Object.assign(rec, { continuous: true, interimResults: true, lang: navigator.language || 'en-US' });
+    rec.onresult = e => { let said = ''; for (const r of e.results) said += r[0].transcript; inp.value = (base ? base + ' ' : '') + said.trim(); };
+    rec.onend = () => stopMic();
+    rec.onerror = () => { stopMic(); inp.focus(); toast('Tap the mic on your keyboard and talk'); };
+    try { rec.start(); s.$('[data-x="mic"]').classList.add('on'); buzz(); } catch { stopMic(); }
+  });
+  s.onClose = stopMic;
   const box = s.$('#chat');
   const draw = (thinking = false) => {
     box.innerHTML = (ui.chat.length ? '' : `<div class="chat-hi"><div class="chat-big">✨</div><p>Ask anything about how you've been. Pulse reads everything you've logged to answer.</p>
@@ -1334,6 +1386,7 @@ function openAsk(q = '') {
   async function send(text) {
     text = text.trim();
     if (!text || s.busy) return;
+    if (rec) stopMic();
     s.busy = true; s.$('#aq').value = '';
     ui.chat.push({ role: 'user', content: text }); draw(true);
     try {
@@ -1349,70 +1402,6 @@ function openAsk(q = '') {
   if (q) send(q);
 }
 
-// ---------- chat ----------
-// "Just talk": a normal back-and-forth, like texting a smart friend who can see
-// her logs. Chats stay on this phone (localStorage), newest first.
-const CHAT_KEY = 'pulseChats-' + (DEMO ? 'demo' : NEW ? 'new' : 'me');
-const CHAT_IDEAS = ['Practice was rough today', 'Help me plan meals for this week', "I can't fall asleep", 'What should I focus on before the next game?'];
-function loadChats() { try { return JSON.parse(localStorage.getItem(CHAT_KEY) || '[]'); } catch { return []; } }
-function saveChats(list) { try { localStorage.setItem(CHAT_KEY, JSON.stringify(list.filter(c => c.msgs.length).slice(0, 30))); } catch {} }
-function openChat() {
-  let chats = loadChats(), cur = { id: uid(), at: Date.now(), msgs: [] }, view = 'chat';
-  const s = openSheet({
-    title: '💬 Chat', full: true,
-    body: `<div class="chat-top"><button class="pill-btn" data-x="list">🕘 Chats</button><button class="pill-btn" data-x="new">＋ New chat</button></div><div id="chat" class="chat"></div>`,
-    footer: `<form class="ask-form" id="cf">${Speech ? '<button type="button" class="btn ghost mic" data-x="mic" aria-label="Talk">🎙️</button>' : ''}<input id="cq" placeholder="Say anything…" autocomplete="off" enterkeyhint="send"><button class="btn primary" aria-label="Send">↑</button></form>`,
-  });
-  const box = s.$('#chat');
-  const draw = (thinking = false) => {
-    s.$('#cf').hidden = view === 'list';
-    if (view === 'list') {
-      box.innerHTML = chats.length ? chats.map(c => `<button class="chat-item" data-x="open" data-id="${c.id}"><b>${esc(c.msgs[0].content.slice(0, 60))}</b><small>${new Date(c.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${c.msgs.length} messages</small></button>`).join('')
-        : '<p class="muted center">No chats yet.</p>';
-      return;
-    }
-    box.innerHTML = (cur.msgs.length ? '' : `<div class="chat-hi"><div class="chat-big">💬</div><p>Talk about anything: your day, practice, school, or how you're feeling. Pulse knows what you've logged.</p>
-        <div class="ask-ideas col">${CHAT_IDEAS.map(x => `<button class="pr-tag" data-x="idea" data-q="${esc(x)}">${esc(x)}</button>`).join('')}</div></div>`)
-      + cur.msgs.map(m => `<div class="msg ${m.role}">${m.role === 'user' ? esc(m.content) : fmtAnswer(m.content)}</div>`).join('')
-      + (thinking ? `<div class="msg assistant thinking"><span></span><span></span><span></span></div>` : '');
-    box.parentElement.scrollTop = box.parentElement.scrollHeight;
-  };
-  const keep = () => { chats = [cur, ...chats.filter(c => c.id !== cur.id)]; saveChats(chats); };
-  async function send(text) {
-    text = text.trim();
-    if (!text || s.busy) return;
-    stopMic();
-    s.busy = true; s.$('#cq').value = '';
-    cur.msgs.push({ role: 'user', content: text }); cur.at = Date.now(); keep(); draw(true);
-    try {
-      const r = await fetch(CONFIG_PUSH() + '/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'chat', context: askContext(), messages: cur.msgs.slice(-16) }) });
-      const j = await r.json();
-      cur.msgs.push({ role: 'assistant', content: j.answer || "Couldn't answer that one right now. Try again in a minute." });
-    } catch { cur.msgs.push({ role: 'assistant', content: "Can't reach Pulse right now. Check your connection and try again." }); }
-    keep(); s.busy = false; draw();
-  }
-  // Voice typing into the box; she still taps send.
-  let rec = null;
-  const stopMic = () => { if (rec) { const r = rec; rec = null; r.stop(); } s.$('[data-x="mic"]')?.classList.remove('on'); };
-  s.on('click', '[data-x="mic"]', () => {
-    if (rec) return stopMic();
-    const inp = s.$('#cq'), base = inp.value.trim();
-    rec = new Speech();
-    Object.assign(rec, { continuous: true, interimResults: true, lang: navigator.language || 'en-US' });
-    rec.onresult = e => { let said = ''; for (const r of e.results) said += r[0].transcript; inp.value = (base ? base + ' ' : '') + said.trim(); };
-    rec.onend = () => stopMic();
-    rec.onerror = () => { stopMic(); toast('Tap the 🎤 on your keyboard and talk'); };
-    try { rec.start(); s.$('[data-x="mic"]').classList.add('on'); buzz(); } catch { stopMic(); }
-  });
-  s.on('submit', '#cf', (el, e) => { e.preventDefault(); send(s.$('#cq').value); });
-  s.on('click', '[data-x="idea"]', el => send(el.dataset.q));
-  s.on('click', '[data-x="list"]', () => { view = view === 'list' ? 'chat' : 'list'; draw(); });
-  s.on('click', '[data-x="new"]', () => { cur = { id: uid(), at: Date.now(), msgs: [] }; view = 'chat'; draw(); s.$('#cq').focus(); });
-  s.on('click', '[data-x="open"]', el => { cur = chats.find(c => c.id === el.dataset.id) || cur; view = 'chat'; draw(); });
-  s.onClose = stopMic;
-  draw();
-}
-
 // ---------- tour ----------
 // A quick look around after setup: one spotlight at a time, two lines each.
 const TOUR = [
@@ -1421,7 +1410,7 @@ const TOUR = [
   ['.rings', 'Daily rings', 'Protein, water, sleep and meds. Tap one to jump to it.'],
   ['.game-banner, .next-game', 'Games', 'Your next game shows up here. On game day, tap it to see what to eat next.'],
   ['.sleep-card', 'Sleep', "Log last night and see tonight's bedtime, planned around your wake-up and games."],
-  ['.ask-pills', 'Ask or chat', 'Ask about your sleep, food or stomach, answered from your logs. Or just talk.'],
+  ['.ask-pill', 'Ask Pulse', 'Ask about your sleep, food, stomach or games. Answers come from what you log. Tap the mic to talk.'],
   ['[data-tab="foods"]', 'Foods', "Everything you've eaten, plus your own foods. Easy to re-log."],
   ['[data-tab="recipes"]', 'Recipes', 'Save recipes and meal preps, and see how many containers are left.'],
   ['[data-tab="trends"]', 'Trends', 'Your week and month, what helps you recover, and what might bother your stomach.'],
@@ -1446,7 +1435,7 @@ function startTour() {
     el.innerHTML = `<div class="tour-hole" style="top:${r.top - pad}px;left:${r.left - pad}px;width:${r.width + pad * 2}px;height:${r.height + pad * 2}px"></div>
       <div class="tour-tip" style="${below ? `top:${Math.min(r.bottom + pad + 12, innerHeight - 190)}px` : `bottom:${Math.min(innerHeight - r.top + pad + 12, innerHeight - 190)}px`}">
         <div class="tour-n">${i + 1} of ${steps.length}</div><b>${title}</b><p>${text}</p>
-        <div class="tour-btns"><button class="link" data-t="skip">${i === steps.length - 1 ? '' : 'Skip'}</button><button class="btn primary" data-t="next">${i === steps.length - 1 ? 'Done' : 'Next'}</button></div></div>`;
+        <div class="tour-btns">${i === steps.length - 1 ? '<span></span>' : '<button class="tour-skip" data-t="skip">Skip tour</button>'}<button class="btn primary" data-t="next">${i === steps.length - 1 ? 'Done' : 'Next'}</button></div></div>`;
   }
   function show() {
     const t = document.querySelector(steps[i][0]);
@@ -1988,6 +1977,7 @@ function screenMe() {
       <div class="muted small">${cloud ? esc(cloud.email) : '🔒 Private. Stays on this phone.'}</div></div>
     </section>
     <button class="btn soft full" data-act="tour">🧭 Show me around</button>
+    ${DEMO ? '<button class="btn soft full mt" data-act="winPreview">🏆 Preview the win screen</button>' : ''}
 
     <section class="card">
       <h3>Your setup</h3>
@@ -2083,13 +2073,13 @@ const acts = {
   trackTog: d => saveProfile({ track: { ...(profile()?.track || {}), [d.k]: !tracks(d.k) } }),
   period: d => setPeriod(d.f),
   periodFeel: d => togglePeriodFeel(d.k),
+  winPreview: () => winScreen(GAMES.find(g => g.result?.startsWith('W')) || { ...GAMES[0], result: 'W 72-65' }),
   winDone: d => { try { localStorage.setItem('pulseWinSeen', JSON.stringify([...winSeen(), d.d])); } catch {} queueRender(); },
   notifyOn: () => turnOnNotify(),
   eatPrep: d => eatPrep(d.id),
   editPrep: d => openPrep({ prep: db.get('preps', d.id) }),
   logWeight: () => openWeight(),
   ask: d => openAsk(d.q || ''),
-  chat: () => openChat(),
   tour: () => startTour(),
   weekDone: d => saveProfile({ ['weekSeen-' + d.d]: true }),
   getIdeas: () => getIdeas(),
@@ -3293,6 +3283,7 @@ function startApp({ first = false } = {}) {
   if (DEMO) document.body.insertAdjacentHTML('beforeend', '<div class="demo-tag">Sample data</div>');
   navigator.storage?.persist?.();
   notify.clearStale(handledNotes());
+  if (DEMO && new URLSearchParams(location.search).has('win')) setTimeout(() => acts.winPreview(), 2200);
   if (new URLSearchParams(location.search).get('open') === 'wrapped') { openFromNote('wrapped'); history.replaceState(null, '', location.pathname); }
   notify.isOn().then(on => { ui.notifyOn = on; if (ui.tab === 'me') queueRender(); });
   refreshResults();
@@ -3304,7 +3295,7 @@ function splash(first) {
   const name = (profile()?.name || '').trim().split(/\s+/)[0];
   const t = dateStr(), n = streak(), preps = activePreps().reduce((s, p) => s + p.left, 0);
   const todayCal = sumMacros(dayEntries(t).map(e => e.macros)).cal;
-  const now = timeStr(), num = profile()?.number, gm = gameOn(t);
+  const now = timeStr(), num = profile()?.number, gm = gameOn(t)?.result ? null : gameOn(t);
   const note = first ? 'Tap ＋ to log your first meal'
     : now === '11:11' ? '🌠 11:11'
     : recentWin(t) ? `🏆 Congrats on the win ${vsAt(recentWin(t))} ${esc(recentWin(t).opp)}!`
@@ -3327,6 +3318,30 @@ function splash(first) {
   try { due = first || tourDue(); } catch {}
   if (due) setTimeout(startTour, (first ? 2400 : 1700) + 500);
 }
+
+// ---------- pull to refresh ----------
+// Pull down from the top of any screen: checks for scores and reloads the app.
+(() => {
+  let y0 = null, dy = 0;
+  const ptr = document.createElement('div');
+  ptr.className = 'ptr'; ptr.innerHTML = '<span class="spin"></span>';
+  document.body.appendChild(ptr);
+  const blocked = () => sheets.length || document.querySelector('.tour, .wrapped, .winscreen, .splash, .ob');
+  addEventListener('touchstart', e => { y0 = scrollY <= 0 && !blocked() ? e.touches[0].clientY : null; dy = 0; }, { passive: true });
+  addEventListener('touchmove', e => {
+    if (y0 == null) return;
+    dy = Math.max(0, e.touches[0].clientY - y0);
+    if (scrollY > 0) { y0 = null; dy = 0; }
+    ptr.style.transform = `translate(-50%, ${Math.min(dy * 0.5, 70) - 50}px) rotate(${dy * 2}deg)`;
+    ptr.classList.toggle('ready', dy > 120);
+  }, { passive: true });
+  addEventListener('touchend', () => {
+    if (y0 == null) return;
+    y0 = null;
+    if (dy > 120) { ptr.classList.add('go'); buzz(); setTimeout(() => location.reload(), 350); }
+    else ptr.style.transform = '';
+  });
+})();
 
 // ---------- boot ----------
 db.onChange(kind => {
