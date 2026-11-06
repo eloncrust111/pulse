@@ -1266,6 +1266,7 @@ function askContext() {
   const opt = OPTIONAL_MACROS.filter(([k]) => tracks(k)).map(([k, l]) => `${g[k]} g ${l.toLowerCase()}`), off = OPTIONAL_MACROS.filter(([k]) => !tracks(k)).map(([, l]) => l.toLowerCase());
   lines.push(`Daily goals: ${[`${g.cal} cal`, `${g.p} g protein`, ...opt, `${g.water} oz water`].join(', ')}. Sleep goal ${fmtSleep(sleepGoal())}.${p.goalsGuess ? " These goals are Pulse's generic starting point, NOT from her dietitian." : ''}${off.length ? ` She chose not to track ${off.join(' or ')}, so don't coach on those goals.` : ''}`);
   if (meds) lines.push(`Meds & vitamins: ${meds}.`);
+  lines.push('She weighs almost everything she eats on a food scale, so logged grams are exact. Give portion advice in grams.');
   const tp = bedPlan(t); lines.push(`Tonight: sleep need ${fmtSleep(tp.need.min)}${tp.need.why.length ? ` (${tp.need.why.join(', ')})` : ''}, bed by ${fmtTime(tp.bed)}, up at ${fmtTime(tp.wake)}.`);
   const r = readiness(t); if (r) lines.push(`Readiness today: ${r.t} (${r.facts.join(', ')}).`);
   const next = GAMES.filter(x => x.date >= t && !x.result).slice(0, 3).map(x => `${x.date} ${vsAt(x)} ${x.opp} ${gameTime(x)}`);
@@ -2252,7 +2253,8 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
 function openAmount({ item, entry = null, prep = null, meal, date, onAdded }) {
   let unit = 'g', curMeal = meal;
   if (!prep && entry?.prepId) prep = db.get('preps', entry.prepId);
-  const startG = entry ? entry.grams : prep ? prep.gramsEach : (lastGrams(item.kind, item.id) ?? (item.servingG || 100));
+  // She weighs almost everything, so a new food opens empty, ready for the scale's number.
+  const startG = entry ? entry.grams : prep ? prep.gramsEach : '';
   const quick = [];
   const lg = prep ? null : lastGrams(item.kind, item.id);
   if (prep) quick.push([prep.gramsEach, `1 container · ${fmt(prep.gramsEach)} g`], [prep.gramsEach / 2, '½ container']);
@@ -2264,11 +2266,11 @@ function openAmount({ item, entry = null, prep = null, meal, date, onAdded }) {
   quick.push([100, '100 g']);
   const sus = entry ? null : gutSuspects().get(item.kind + ':' + item.id);
   const s = openSheet({
-    title: entry ? 'Edit entry' : 'How much?',
+    title: entry ? 'Edit entry' : prep ? 'How much?' : 'How many grams?',
     body: `<div class="amt-food">${thumb(item.photo, item.kind === 'recipe' ? '🍲' : '🥣')}<div><div class="amt-name">${esc(item.name)}</div><div class="muted small">${esc(item.brand || '')}</div></div></div>
       ${gfWarning(item.kind, item.kind === 'food' ? getFood(item.id) : db.get('recipes', item.id))}
       ${sus ? `<p class="tip">⚠️ Heads up: stomach trouble followed this ${sus.hit} of the ${sus.eaten} times you had it.</p>` : ''}
-      <div class="amt-input"><input id="amt" type="text" inputmode="decimal" value="${fmtIn(startG)}" autocomplete="off" aria-label="Amount">
+      <div class="amt-input"><input id="amt" type="text" inputmode="decimal" value="${startG === '' ? '' : fmtIn(startG)}" placeholder="0" autocomplete="off" aria-label="Amount">
         <div class="seg unit">${`<button data-x="unit" data-u="g" class="on">grams</button>`}${item.servingG ? `<button data-x="unit" data-u="s">${prep ? 'containers' : 'servings'}</button>` : ''}</div></div>
       <div class="chips">${quick.map(([g, l]) => `<button class="chip sm" data-x="q" data-g="${g}">${l}</button>`).join('')}</div>
       <div class="amt-prev" id="prev"></div>
@@ -2280,7 +2282,7 @@ function openAmount({ item, entry = null, prep = null, meal, date, onAdded }) {
   const grams = () => unit === 'g' ? num(inp.value) : num(inp.value) * item.servingG;
   function update() {
     const g = grams(), m = scale(item.per, g);
-    s.$('#prev').innerHTML = `<div class="prev-cal"><b>${fmt(m.cal)}</b> cal</div>
+    s.$('#prev').innerHTML = !g && unit === 'g' ? `<div class="prev-cal">Type what the scale says</div>` : `<div class="prev-cal"><b>${fmt(m.cal)}</b> cal</div>
       <div class="prev-m"><div><b class="mp">${fmt(m.p)}g</b><span>protein</span></div><div><b class="mc">${fmt(m.c)}g</b><span>carbs</span></div><div><b class="mf">${fmt(m.f)}g</b><span>fat</span></div><div><b>${fmt(m.fiber)}g</b><span>fiber</span></div></div>
       ${unit === 's' ? `<div class="muted tiny center">= ${fmt(g)} g</div>` : ''}`;
     s.$('#saveBtn').textContent = entry ? 'Save' : `Add to ${mealById(curMeal).name}`;
@@ -3311,7 +3313,7 @@ function welcomeLine({ n, preps, todayCal }) {
     dayEntries(y).length && yEat.p >= g.p && '✓ Hit your protein goal yesterday',
     (db.get('days', y)?.water || 0) >= g.water && '💧 Hit your water goal yesterday',
   ].filter(Boolean);
-  const plain = h < 5 ? ['Late one. Sleep soon', 'Up late'] : h < 12 ? ['Have a good day', 'Water first', 'Morning'] : h < 17 ? ['Hope the day is going well', "Don't skip lunch", 'Afternoon check-in'] : ['Hope today went well', 'Wind down when you can', 'Evening check-in'];
+  const plain = h < 5 ? ['Late one. Sleep soon', 'Up late?'] : h < 12 ? ['Have a good day', 'Water first', 'Morning'] : h < 17 ? ['Hope the day is going well', "Don't skip lunch", 'Afternoon check-in'] : ['Hope today went well', 'Wind down when you can', 'Evening check-in'];
   let last = '';
   try { last = localStorage.getItem('pulseLastHello') || ''; } catch {}
   const pool = (real.length && Math.random() < 0.75 ? real : plain).filter(x => x !== last);

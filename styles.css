@@ -368,6 +368,7 @@ textarea { resize: vertical; }
 /* welcome / auth */
 .welcome { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: calc(env(safe-area-inset-top) + 24px) 20px calc(env(safe-area-inset-bottom) + 24px); text-align: center;
   background: radial-gradient(90% 50% at 50% 0%, color-mix(in srgb, var(--purple-3) 22%, transparent), transparent); }
+.quiet #main > .welcome img { visibility: hidden; }
 .welcome h1 { font-size: 30px; margin-top: 14px; letter-spacing: -.5px; }
 .welcome > p { margin: 6px 0 16px; }
 .welcome .card { width: 100%; margin: 0 0 16px; text-align: left; }
