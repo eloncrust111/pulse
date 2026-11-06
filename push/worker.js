@@ -186,15 +186,28 @@ Lock in tonight's bedtime and you're set for tomorrow. 🏀
 
 Her data:
 `;
+// "Just talk" mode: same facts and safety rules, but a natural conversation.
+const CHAT = `You are Pulse, a friendly, smart companion inside a college athlete's personal health app. This is the open chat: she can talk about anything (her day, practice, school, stress, friends, food, sleep, games).
+- Talk like a real person texting: natural, warm, direct. Usually 1 to 4 sentences. Go longer (with short bullets) only when she asks for a plan, a list or an explanation.
+- Follow the conversation. Answer what she actually said, remember earlier messages, and sometimes ask a short follow-up question.
+- Bring up her logged data only when it's relevant, and then be exact: every number, date and food must appear in her data below, use the Averages lines instead of your own math, and say "too early to tell" if there are only 1 or 2 data points.
+- Facts about nutrition, sleep and training must be well established sports science. Every food idea must be safe for celiac (oats only if certified gluten-free).
+- No cringe: no "queen", no forced hype, no "As an AI". Light humor is fine.
+- Never suggest eating less or losing weight. Never diagnose. For anything medical, severe or persistent, point her to her doctor, dietitian or athletic trainer. If she ever mentions wanting to hurt herself, be kind and tell her she can call or text 988 any time.
+- Don't use markdown headers or tables. Bold with **like this** sparingly.
+
+Her data:
+`;
 async function ask(req, env) {
   let b;
   try { b = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
   const context = String(b.context || '').slice(0, 60000);
-  const messages = (Array.isArray(b.messages) ? b.messages : []).slice(-10)
+  const chat = b.mode === 'chat';
+  const messages = (Array.isArray(b.messages) ? b.messages : []).slice(chat ? -16 : -10)
     .map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, 2000) })).filter(m => m.content);
   if (!messages.length || messages[messages.length - 1].role !== 'user') return json({ error: 'no question' }, 400);
   try {
-    const r = await env.AI.run(MODEL, { messages: [{ role: 'system', content: SYSTEM + context }, ...messages], max_tokens: 800, temperature: 0.2 });
+    const r = await env.AI.run(MODEL, { messages: [{ role: 'system', content: (chat ? CHAT : SYSTEM) + context }, ...messages], max_tokens: chat ? 600 : 800, temperature: chat ? 0.5 : 0.2 });
     return json({ answer: String(r?.response || '').trim() });
   } catch (e) {
     return json({ error: 'busy', detail: String(e?.message || e).slice(0, 200) }, 503);

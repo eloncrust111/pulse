@@ -304,7 +304,7 @@ function screenToday() {
   const left = g.cal - t.cal;
   return `
   <header class="top today-top">
-    <button class="ask-pill" data-act="ask" aria-label="Ask Pulse">✨ Ask</button>
+    <div class="ask-pills"><button class="ask-pill" data-act="chat" aria-label="Chat with Pulse">💬 Chat</button><button class="ask-pill" data-act="ask" aria-label="Ask Pulse">✨ Ask</button></div>
     <div class="hello">${greeting()}, ${esc(firstName())}</div>
     <div class="datenav">
       <button class="dn-btn" data-act="day" data-n="-1" aria-label="Previous day">‹</button>
@@ -1093,7 +1093,7 @@ function weekCard(date) {
       ${good[0] ? `<div class="fact"><span>✅</span><div><b>Went well:</b> ${good[0]}</div></div>` : ''}
       ${tryNext[0] ? `<div class="fact"><span>🎯</span><div><b>Try this week:</b> ${tryNext[0]}</div></div>` : ''}
     </div>
-    ${parseDate(date).getDay() === 0 ? `<button class="btn primary full" data-act="wrapped" data-from="${range[0]}" data-to="${range[1]}">▶ Watch your week</button>` : ''}
+    ${DEMO || parseDate(date).getDay() === 0 ? `<button class="btn primary full" data-act="wrapped" data-from="${range[0]}" data-to="${range[1]}">▶ Watch your week</button>` : ''}
     <button class="btn soft full mt" data-act="ask" data-q="How did my week go? What should I focus on this week?">✨ Ask Pulse about my week</button>
   </section>`;
 }
@@ -1297,7 +1297,7 @@ function askContext() {
 }
 const ASK_IDEAS = ['Why was I tired this week?', "What's been upsetting my stomach?", 'How has my sleep been?', 'Am I eating enough on practice days?', 'What should I eat before the next game?'];
 function askBar() {
-  return `<section class="card ask-bar"><button class="ask-open" data-act="ask"><span>✨</span><span class="grow">Ask Pulse anything about you</span></button>
+  return `<section class="card ask-bar"><div class="ask-row"><button class="ask-open" data-act="ask"><span>✨</span><span class="grow">Ask Pulse anything about you</span></button><button class="ask-chat" data-act="chat" aria-label="Just talk">💬</button></div>
     <div class="ask-ideas">${ASK_IDEAS.slice(0, 3).map(q => `<button class="pr-tag" data-act="ask" data-q="${esc(q)}">${esc(q)}</button>`).join('')}</div></section>`;
 }
 // Bold headline, then bullets, so answers read at a glance.
@@ -1348,6 +1348,121 @@ function openAsk(q = '') {
   draw();
   if (q) send(q);
 }
+
+// ---------- chat ----------
+// "Just talk": a normal back-and-forth, like texting a smart friend who can see
+// her logs. Chats stay on this phone (localStorage), newest first.
+const CHAT_KEY = 'pulseChats-' + (DEMO ? 'demo' : NEW ? 'new' : 'me');
+const CHAT_IDEAS = ['Practice was rough today', 'Help me plan meals for this week', "I can't fall asleep", 'What should I focus on before the next game?'];
+function loadChats() { try { return JSON.parse(localStorage.getItem(CHAT_KEY) || '[]'); } catch { return []; } }
+function saveChats(list) { try { localStorage.setItem(CHAT_KEY, JSON.stringify(list.filter(c => c.msgs.length).slice(0, 30))); } catch {} }
+function openChat() {
+  let chats = loadChats(), cur = { id: uid(), at: Date.now(), msgs: [] }, view = 'chat';
+  const s = openSheet({
+    title: '💬 Chat', full: true,
+    body: `<div class="chat-top"><button class="pill-btn" data-x="list">🕘 Chats</button><button class="pill-btn" data-x="new">＋ New chat</button></div><div id="chat" class="chat"></div>`,
+    footer: `<form class="ask-form" id="cf">${Speech ? '<button type="button" class="btn ghost mic" data-x="mic" aria-label="Talk">🎙️</button>' : ''}<input id="cq" placeholder="Say anything…" autocomplete="off" enterkeyhint="send"><button class="btn primary" aria-label="Send">↑</button></form>`,
+  });
+  const box = s.$('#chat');
+  const draw = (thinking = false) => {
+    s.$('#cf').hidden = view === 'list';
+    if (view === 'list') {
+      box.innerHTML = chats.length ? chats.map(c => `<button class="chat-item" data-x="open" data-id="${c.id}"><b>${esc(c.msgs[0].content.slice(0, 60))}</b><small>${new Date(c.at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · ${c.msgs.length} messages</small></button>`).join('')
+        : '<p class="muted center">No chats yet.</p>';
+      return;
+    }
+    box.innerHTML = (cur.msgs.length ? '' : `<div class="chat-hi"><div class="chat-big">💬</div><p>Talk about anything: your day, practice, school, or how you're feeling. Pulse knows what you've logged.</p>
+        <div class="ask-ideas col">${CHAT_IDEAS.map(x => `<button class="pr-tag" data-x="idea" data-q="${esc(x)}">${esc(x)}</button>`).join('')}</div></div>`)
+      + cur.msgs.map(m => `<div class="msg ${m.role}">${m.role === 'user' ? esc(m.content) : fmtAnswer(m.content)}</div>`).join('')
+      + (thinking ? `<div class="msg assistant thinking"><span></span><span></span><span></span></div>` : '');
+    box.parentElement.scrollTop = box.parentElement.scrollHeight;
+  };
+  const keep = () => { chats = [cur, ...chats.filter(c => c.id !== cur.id)]; saveChats(chats); };
+  async function send(text) {
+    text = text.trim();
+    if (!text || s.busy) return;
+    stopMic();
+    s.busy = true; s.$('#cq').value = '';
+    cur.msgs.push({ role: 'user', content: text }); cur.at = Date.now(); keep(); draw(true);
+    try {
+      const r = await fetch(CONFIG_PUSH() + '/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'chat', context: askContext(), messages: cur.msgs.slice(-16) }) });
+      const j = await r.json();
+      cur.msgs.push({ role: 'assistant', content: j.answer || "Couldn't answer that one right now. Try again in a minute." });
+    } catch { cur.msgs.push({ role: 'assistant', content: "Can't reach Pulse right now. Check your connection and try again." }); }
+    keep(); s.busy = false; draw();
+  }
+  // Voice typing into the box; she still taps send.
+  let rec = null;
+  const stopMic = () => { if (rec) { const r = rec; rec = null; r.stop(); } s.$('[data-x="mic"]')?.classList.remove('on'); };
+  s.on('click', '[data-x="mic"]', () => {
+    if (rec) return stopMic();
+    const inp = s.$('#cq'), base = inp.value.trim();
+    rec = new Speech();
+    Object.assign(rec, { continuous: true, interimResults: true, lang: navigator.language || 'en-US' });
+    rec.onresult = e => { let said = ''; for (const r of e.results) said += r[0].transcript; inp.value = (base ? base + ' ' : '') + said.trim(); };
+    rec.onend = () => stopMic();
+    rec.onerror = () => { stopMic(); toast('Tap the 🎤 on your keyboard and talk'); };
+    try { rec.start(); s.$('[data-x="mic"]').classList.add('on'); buzz(); } catch { stopMic(); }
+  });
+  s.on('submit', '#cf', (el, e) => { e.preventDefault(); send(s.$('#cq').value); });
+  s.on('click', '[data-x="idea"]', el => send(el.dataset.q));
+  s.on('click', '[data-x="list"]', () => { view = view === 'list' ? 'chat' : 'list'; draw(); });
+  s.on('click', '[data-x="new"]', () => { cur = { id: uid(), at: Date.now(), msgs: [] }; view = 'chat'; draw(); s.$('#cq').focus(); });
+  s.on('click', '[data-x="open"]', el => { cur = chats.find(c => c.id === el.dataset.id) || cur; view = 'chat'; draw(); });
+  s.onClose = stopMic;
+  draw();
+}
+
+// ---------- tour ----------
+// A quick look around after setup: one spotlight at a time, two lines each.
+const TOUR = [
+  ['.hero', "Today's numbers", 'Calories left and protein so far. Fills in as you log food.'],
+  ['#fab', 'Log food', 'Search, scan a barcode, use a recipe, or snap a photo of your plate.'],
+  ['.rings', 'Daily rings', 'Protein, water, sleep and meds. Tap one to jump to it.'],
+  ['.game-banner, .next-game', 'Games', 'Your next game shows up here. On game day, tap it to see what to eat next.'],
+  ['.sleep-card', 'Sleep', "Log last night and see tonight's bedtime, planned around your wake-up and games."],
+  ['.ask-pills', 'Ask or chat', 'Ask about your sleep, food or stomach, answered from your logs. Or just talk.'],
+  ['[data-tab="foods"]', 'Foods', "Everything you've eaten, plus your own foods. Easy to re-log."],
+  ['[data-tab="recipes"]', 'Recipes', 'Save recipes and meal preps, and see how many containers are left.'],
+  ['[data-tab="trends"]', 'Trends', 'Your week and month, what helps you recover, and what might bother your stomach.'],
+  ['[data-tab="me"]', 'Me', 'Goals, meds, wake-up times and reminders. You can replay this tour here too.'],
+];
+function startTour() {
+  if (document.querySelector('.tour')) return;
+  if (ui.tab !== 'today' || ui.date !== dateStr()) { ui.date = dateStr(); go('today'); }
+  const steps = TOUR.filter(([sel]) => document.querySelector(sel));
+  let i = 0;
+  const el = document.createElement('div');
+  el.className = 'tour';
+  document.body.appendChild(el);
+  const end = () => {
+    el.remove(); removeEventListener('resize', place);
+    if (DEMO) { try { localStorage.setItem('pulseTourDemo', '1'); } catch {} } else saveProfile({ toured: true });
+  };
+  function place() {
+    const [sel, title, text] = steps[i], t = document.querySelector(sel);
+    if (!t) return;
+    const r = t.getBoundingClientRect(), pad = 8, below = r.top + r.height / 2 < innerHeight / 2;
+    el.innerHTML = `<div class="tour-hole" style="top:${r.top - pad}px;left:${r.left - pad}px;width:${r.width + pad * 2}px;height:${r.height + pad * 2}px"></div>
+      <div class="tour-tip" style="${below ? `top:${Math.min(r.bottom + pad + 12, innerHeight - 190)}px` : `bottom:${Math.min(innerHeight - r.top + pad + 12, innerHeight - 190)}px`}">
+        <div class="tour-n">${i + 1} of ${steps.length}</div><b>${title}</b><p>${text}</p>
+        <div class="tour-btns"><button class="link" data-t="skip">${i === steps.length - 1 ? '' : 'Skip'}</button><button class="btn primary" data-t="next">${i === steps.length - 1 ? 'Done' : 'Next'}</button></div></div>`;
+  }
+  function show() {
+    const t = document.querySelector(steps[i][0]);
+    if (!t.closest('#nav, #fab')) t.scrollIntoView({ block: 'center' });
+    setTimeout(place, 60);
+  }
+  el.addEventListener('click', e => {
+    const b = e.target.closest('[data-t]');
+    if (!b) return;
+    if (b.dataset.t === 'skip' || i === steps.length - 1) return end();
+    i++; buzz(); show();
+  });
+  addEventListener('resize', place);
+  if (steps.length) show(); else el.remove();
+}
+const tourDue = () => DEMO ? !localStorage.getItem('pulseTourDemo') : !NEW && !profile()?.toured;
 
 // ---------- journal ----------
 function journalCard(day) {
@@ -1668,7 +1783,7 @@ function screenTrends() {
   return `${header('Trends', streak() ? `🔥 ${streak()}-day logging streak` : '', `<button class="top-btn" data-act="calendar">${icon('calendar')} Calendar</button>`)}
   <div class="pad">
     ${askBar()}
-    ${parseDate(dateStr()).getDay() === 0 ? `<button class="wrapped-btn" data-act="wrapped"><span>▶</span><span class="grow"><b>Your last 7 days, Wrapped</b><small>Tap through your week</small></span></button>` : ''}
+    ${DEMO || parseDate(dateStr()).getDay() === 0 ? `<button class="wrapped-btn" data-act="wrapped"><span>▶</span><span class="grow"><b>Your last 7 days, Wrapped</b><small>Tap through your week</small></span></button>` : ''}
     <div class="seg range">${[7, 30, 90].map(r => `<button class="${ui.range === r ? 'on' : ''}" data-act="range" data-r="${r}">${r === 7 ? 'Week' : r === 30 ? 'Month' : '3 months'}</button>`).join('')}</div>
 
     <section class="card">
@@ -1872,6 +1987,7 @@ function screenMe() {
       <div class="grow"><input class="name-in" value="${esc(p.name || '')}" placeholder="Your name" data-change="name" aria-label="Your name">
       <div class="muted small">${cloud ? esc(cloud.email) : '🔒 Private. Stays on this phone.'}</div></div>
     </section>
+    <button class="btn soft full" data-act="tour">🧭 Show me around</button>
 
     <section class="card">
       <h3>Your setup</h3>
@@ -1973,6 +2089,8 @@ const acts = {
   editPrep: d => openPrep({ prep: db.get('preps', d.id) }),
   logWeight: () => openWeight(),
   ask: d => openAsk(d.q || ''),
+  chat: () => openChat(),
+  tour: () => startTour(),
   weekDone: d => saveProfile({ ['weekSeen-' + d.d]: true }),
   getIdeas: () => getIdeas(),
   gameTip: () => { ui.gameTip = !ui.gameTip; buzz(); queueRender(); },
@@ -3205,6 +3323,9 @@ function splash(first) {
   const done = () => { el.classList.add('out'); setTimeout(() => el.remove(), 450); };
   el.addEventListener('click', done);
   setTimeout(done, first ? 2400 : 1700);
+  let due = false;
+  try { due = first || tourDue(); } catch {}
+  if (due) setTimeout(startTour, (first ? 2400 : 1700) + 500);
 }
 
 // ---------- boot ----------

@@ -13,7 +13,14 @@
   <meta name="format-detection" content="telephone=no">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="manifest" id="mf" href="manifest.webmanifest">
+  <script>
+    // ?demo installs as its own Home Screen app ("Pulse Demo") with sample data.
+    if (new URLSearchParams(location.search).has('demo')) {
+      document.getElementById('mf').href = 'manifest-demo.webmanifest';
+      document.querySelector('meta[name="apple-mobile-web-app-title"]').content = 'Pulse Demo';
+    }
+  </script>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
