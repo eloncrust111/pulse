@@ -36,6 +36,7 @@ export const GAMES = [
   {"date": "2027-02-27", "opp": "Pepperdine", "logo": "pepperdine", "home": true, "where": "Portland, Ore.", "venue": "Chiles Center", "time": "17:00"},
 ];
 
-export const gameOn = date => GAMES.find(g => g.date === date);
-export const nextGame = date => GAMES.find(g => g.date >= date);
+// Postponed games stay in the list (marked) but never count as game day.
+export const gameOn = date => GAMES.find(g => g.date === date && !g.postponed);
+export const nextGame = date => GAMES.find(g => g.date >= date && !g.postponed);
 export const teamLogo = g => `icons/teams/${g.logo}.png`;

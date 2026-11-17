@@ -6,7 +6,7 @@
 
 const PUSH_HOSTS = /(^|\.)(push\.apple\.com|fcm\.googleapis\.com|push\.services\.mozilla\.com|notify\.windows\.com)$/;
 const MAX_SUBS = 20;
-const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
+const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, 'Content-Type': 'application/json' } });
 
 const loadSubs = async env => JSON.parse(await env.SUBS.get('subs') || '[]');
@@ -20,6 +20,10 @@ export default {
     if (url.pathname === '/ask' && req.method === 'POST') return ask(req, env);
     if (url.pathname === '/photo' && req.method === 'POST') return photo(req, env);
     if (url.pathname === '/ideas' && req.method === 'POST') return ideas(req, env);
+    if (url.pathname === '/ics') return ics(url);
+    if (url.pathname === '/brick') return brick(req, url, env);
+    if (url.pathname === '/schedule') return schedule(env);
+    if (url.pathname === '/describe' && req.method === 'POST') return describe(req, env);
     if (url.pathname !== '/sub') return json({ ok: true, name: 'pulse-push' });
     let body;
     try { body = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
@@ -143,6 +147,84 @@ export async function checkResults(env, now = new Date(), send = sendPush, get =
   const wins = fresh.filter(k => found[k].r === 'W' && now - startMs(found[k].start) < 12 * 3600e3);
   if (!wins.length) return;
   for (const s of await loadSubs(env)) if (s.wins !== false) await send(env, s.endpoint, 3 * 3600);
+}
+
+// ---------- schedule changes ----------
+// The whole season from the Pilots' feed, so the app can move postponed or
+// rescheduled games. Cached for 3 hours.
+export function parseSchedule(days) {
+  const out = [];
+  for (const day of days || []) for (const e of day?.events || []) {
+    if (e.sport?.shortname !== 'wbball') continue;
+    const [date, t] = String(e.date).split('T');
+    out.push({ id: e.id, date, time: e.time && /\d/.test(e.time) ? t.slice(0, 5) : null, opp: e.opponent?.title || '', home: e.location_indicator === 'H',
+      postponed: e.status === 'P' || /postpon|cancel/i.test(e.noplay_text || ''), note: e.noplay_text || '', where: e.location || '', venue: e.facility?.title || '' });
+  }
+  return out;
+}
+async function schedule(env) {
+  const hit = JSON.parse(await env.SUBS.get('schedule') || 'null');
+  if (hit && Date.now() - hit.at < 3 * 3600e3) return json(hit.games);
+  const games = new Map();
+  try {
+    // The feed returns a week at a time: October through March.
+    for (let d = new Date(Date.UTC(2026, 9, 1)); d < new Date(Date.UTC(2027, 3, 1)); d = new Date(+d + 7 * 864e5)) {
+      const r = await fetch(FEED + `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}`, { headers: FEED_HEADERS });
+      for (const g of parseSchedule(await r.json())) games.set(g.id, g);
+    }
+  } catch { return json(hit?.games || []); }
+  const list = [...games.values()].sort((a, b) => a.date.localeCompare(b.date));
+  if (list.length) await env.SUBS.put('schedule', JSON.stringify({ at: Date.now(), games: list }));
+  return json(list);
+}
+
+// ---------- calendar links ----------
+// Teamworks, Google, iCloud and school calendars publish an .ics link. Phones
+// can't read those directly (no CORS), so this passes the file through.
+async function ics(url) {
+  let target;
+  try { target = new URL(String(url.searchParams.get('url') || '').replace(/^webcals?:/i, 'https:')); } catch { return json({ error: 'bad link' }, 400); }
+  if (target.protocol !== 'https:') return json({ error: 'bad link' }, 400);
+  try {
+    const r = await fetch(target, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; pulse-cal)', Accept: 'text/calendar,*/*' } });
+    const text = await r.text();
+    if (!r.ok || !text.includes('BEGIN:VCALENDAR')) return json({ error: 'not a calendar' }, 422);
+    return new Response(text.slice(0, 3_000_000), { headers: { ...cors, 'Content-Type': 'text/calendar; charset=utf-8' } });
+  } catch { return json({ error: 'unreachable' }, 502); }
+}
+
+// ---------- Brick ----------
+// An iPhone Shortcut can POST {key, action: "start"|"stop"} when she bricks and
+// unbricks. The app picks the times up next time it opens. Kept 120 days.
+async function brick(req, url, env) {
+  if (req.method === 'POST') {
+    let b;
+    try { b = await req.json(); } catch { b = Object.fromEntries(url.searchParams); }
+    const key = String(b?.key || url.searchParams.get('key') || ''), action = String(b?.action || url.searchParams.get('action') || '');
+    if (!/^[a-z0-9]{16,40}$/.test(key) || !['start', 'stop'].includes(action)) return json({ error: 'bad request' }, 400);
+    const list = JSON.parse(await env.SUBS.get('brick:' + key) || '[]');
+    list.push({ action, at: Date.now() });
+    await env.SUBS.put('brick:' + key, JSON.stringify(list.slice(-400)), { expirationTtl: 120 * 86400 });
+    return json({ ok: true });
+  }
+  const key = String(url.searchParams.get('key') || '');
+  if (!/^[a-z0-9]{16,40}$/.test(key)) return json({ error: 'bad key' }, 400);
+  return json(JSON.parse(await env.SUBS.get('brick:' + key) || '[]'));
+}
+
+// ---------- journal photos ----------
+// A short, plain description so Ask Pulse can "see" what she attached. Not stored.
+async function describe(req, env) {
+  let b;
+  try { b = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
+  const img = String(b.image || '');
+  if (!img.startsWith('data:image/') || img.length > 2_000_000) return json({ error: 'bad image' }, 400);
+  try {
+    const r = await env.AI.run(VISION, { messages: [{ role: 'user', content: [{ type: 'text', text: 'This photo is from a college athlete\'s private journal. Describe what it shows in one or two plain sentences (under 40 words): what, where, any food, people or activity, and any readable text like a workout or a score. No guessing about feelings. No intro.' }, { type: 'image_url', image_url: { url: img } }] }], max_tokens: 120, temperature: 0.1 });
+    return json({ text: String(r?.response || '').trim().slice(0, 300) });
+  } catch (e) {
+    return json({ error: 'busy' }, 503);
+  }
 }
 
 // ---------- Ask Pulse ----------

@@ -45,8 +45,8 @@ export function fmt(n) {
   return String(Math.round(n * 10) / 10);
 }
 
-export const MK = ['cal', 'p', 'c', 'f', 'fiber', 'sugar', 'sodium'];
-export const zero = () => ({ cal: 0, p: 0, c: 0, f: 0, fiber: 0, sugar: 0, sodium: 0 });
+export const MK = ['cal', 'p', 'c', 'f', 'fiber', 'sugar', 'sodium', 'caf'];
+export const zero = () => ({ cal: 0, p: 0, c: 0, f: 0, fiber: 0, sugar: 0, sodium: 0, caf: 0 });
 
 // Foods store label values per serving; everything is computed per gram.
 export function perGram(food) {

@@ -359,6 +359,7 @@ function screenToday() {
   ${readinessCard(d)}
   ${weekCard(d)}
   ${gameBanner(d)}
+  ${scheduleCard(d)}
   ${activityRow(d, day)}
   ${gfPrompt()}
   ${prepCard()}
@@ -370,6 +371,8 @@ function screenToday() {
   ${medsCard(d, day)}
   ${feelCard(d)}
   ${gutCard(d)}
+  ${brickRow(d)}
+  ${injuryRow(d)}
   ${journalCard(day)}
   ${periodRow(d, day)}
   <div class="spacer"></div>`;
@@ -448,6 +451,7 @@ function applyResults(res) {
 }
 try { applyResults(JSON.parse(localStorage.getItem('pulseResults') || '{}')); } catch {}
 async function refreshResults() {
+  refreshSchedule();
   try {
     const res = await notify.fetchResults();
     if (!res) return;
@@ -518,7 +522,45 @@ function ptToLocal(date, time) {
   const at = new Date(guess - (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - guess));
   return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
 }
-GAMES.forEach(g => { if (g.time) { g.ptTime = g.time; g.time = ptToLocal(g.date, g.time); } });
+// Schedule changes: the Pilots' feed (postponed or moved games) plus her own edits,
+// laid over the schedule that shipped with the app. Edits always win.
+const BASE_GAMES = GAMES.map(g => ({ ...g, key: g.date + '|' + g.opp }));
+const sameTeam = (a, b) => { const n = x => x.toLowerCase().replace(/[^a-z]/g, ''); return n(a) === n(b) || n(a).startsWith(n(b)) || n(b).startsWith(n(a)); };
+function applySchedule() {
+  let feed = [];
+  try { feed = JSON.parse(localStorage.getItem('pulseSchedule') || '[]'); } catch {}
+  const edits = profile()?.gameEdits || {};
+  const out = BASE_GAMES.map(b => {
+    const g = { ...b, ptTime: b.time, postponed: false };
+    const f = feed.filter(x => sameTeam(x.opp, b.opp) && x.home === b.home)
+      .sort((x, y) => Math.abs(parseDate(x.date) - parseDate(b.date)) - Math.abs(parseDate(y.date) - parseDate(b.date)))[0];
+    if (f) Object.assign(g, { date: f.date, ptTime: f.time || g.ptTime, postponed: f.postponed, note: f.note || '' });
+    const e = edits[b.key];
+    if (e) {
+      if (e.date) g.date = e.date;
+      if (e.postponed != null) g.postponed = e.postponed;
+      if (e.venue != null) g.venue = e.venue;
+    }
+    // Her own time is typed in her phone's time; feed times are Pacific.
+    g.time = e?.time || (g.ptTime ? ptToLocal(g.date, g.ptTime) : null);
+    g.edited = !!e;
+    return g;
+  }).sort((a, b) => a.date.localeCompare(b.date));
+  GAMES.splice(0, GAMES.length, ...out);
+  try { applyResults(JSON.parse(localStorage.getItem('pulseResults') || '{}')); } catch {}
+}
+async function refreshSchedule() {
+  try {
+    const r = await fetch(CONFIG_PUSH() + '/schedule');
+    const list = await r.json();
+    if (!Array.isArray(list) || !list.length) return;
+    const before = JSON.stringify(GAMES);
+    localStorage.setItem('pulseSchedule', JSON.stringify(list));
+    applySchedule();
+    if (JSON.stringify(GAMES) !== before) { queueRender(); scheduleNotify(); }
+  } catch {}
+}
+try { applySchedule(); } catch {}
 const zoneTag = () => HERE === PT ? '' : ' ' + (new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(new Date()).find(x => x.type === 'timeZoneName')?.value || '');
 const gameTime = g => g.time ? fmtTime(g.time) + zoneTag() : 'Time TBA';
 const vsAt = g => g.home ? 'vs' : '@';
@@ -588,11 +630,13 @@ function gameBanner(date) {
     ${plan ? `<span class="gb-tap">${ui.gameTip ? '✕' : "🍽️ What's next"}</span>` : ''}</div>
     ${plan && ui.gameTip ? gameNudge(date, g) : ''}</section>`;
   }
+  const pp = date === dateStr() ? GAMES.find(x => x.postponed && x.date >= addDays(date, -3) && x.date <= addDays(date, 7)) : null;
+  const ppNote = pp ? `<button class="pp-note" data-act="games">⏸️ ${vsAt(pp)} ${esc(pp.opp)} (${parseDate(pp.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}) was postponed. New date not set yet.</button>` : '';
   const n = nextGame(addDays(date, 1));
-  if (!n || date < dateStr()) return '';
+  if (!n || date < dateStr()) return ppNote;
   const days = Math.round((parseDate(n.date) - parseDate(date)) / 864e5);
-  if (days > 6) return '';
-  return `<button class="next-game" data-act="calendar"><img class="team-logo sm" src="${teamLogo(n)}" alt="">
+  if (days > 6) return ppNote;
+  return `${ppNote}<button class="next-game" data-act="calendar"><img class="team-logo sm" src="${teamLogo(n)}" alt="">
     <span class="grow">Next game <b>${days === 1 ? 'tomorrow' : parseDate(n.date).toLocaleDateString(undefined, { weekday: 'long' })}</b> ${vsAt(n)} ${esc(n.opp)}
     ${days === 1 && date === dateStr() ? `<div class="muted tiny">Tonight: a carb-rich dinner and bed by ${fmtTime(bedGoal(date))}</div>` : ''}</span><span class="muted">${gameTime(n)}</span></button>`;
 }
@@ -672,6 +716,15 @@ function sleepStreak() {
   }
   return n;
 }
+// Caffeine: logged and shown, no goal. Within 8 hours of bed it gets a mention.
+const cafOf = e => e.macros?.caf || 0;
+const hasCaf = e => cafOf(e) > 0 || entryTags(e).includes('Caffeine');
+function lateCaffeine(date) {
+  if (date !== dateStr()) return null;
+  const cut = fromMin(toMin(bedGoal(date)) - 480);
+  const late = dayEntries(date).filter(e => hasCaf(e) && e.time && toMin(e.time) >= toMin(cut));
+  return late.length ? late[late.length - 1] : null;
+}
 function sleepCard(date, day) {
   const last7 = Array.from({ length: 7 }, (_, i) => db.get('days', addDays(date, -i))).filter(x => x?.bed);
   const near = last7.filter(nearPlan).length, plan = date >= dateStr() ? bedPlan(date) : null;
@@ -683,6 +736,7 @@ function sleepCard(date, day) {
         ${day.bed ? `<div class="sleep-times"><span>🛏️ ${fmtTime(day.bed)}</span><span>☀️ ${day.wake ? fmtTime(day.wake) : '–'}</span></div>` : ''}
       </div>` : `<p class="muted small">Tap to log last night.</p>`}
     ${plan ? tonightRow(date, plan) : ''}
+    ${plan && lateCaffeine(date) ? `<p class="caf-note">⚡ Caffeine at ${fmtTime(lateCaffeine(date).time)}, within 8 hours of bed. It can make it harder to fall asleep tonight.</p>` : ''}
     ${last7.length ? `<div class="sleep-goal"><span>🎯 Near your planned bedtime <b>${near} of the last ${last7.length} nights</b></span>${st >= 2 ? `<span class="streak">🔥 ${st} in a row</span>` : ''}</div>` : ''}
   </section>`;
 }
@@ -996,6 +1050,8 @@ const hmMinus = (t, m) => { const x = +t.slice(0, 2) * 60 + +t.slice(3) - m; ret
 const medsAm = () => [profile()?.medsAm, profile()?.medsTime].find(v => /^\d{2}:\d{2}$/.test(v || '') && v >= '05:00' && v <= '13:00') || '09:00';
 const medsPm = () => profile()?.medsPm || '20:00';
 const nOn = k => profile()?.[k] ?? NOTIFS.find(n => n[0] === k)[3];
+const shownNotifs = () => NOTIFS.filter(n => n[0] !== 'n_period' || periodOn());
+const allNotifsOn = () => shownNotifs().every(n => nOn(n[0]));
 function notifyItems() {
   const t = dateStr(), items = [];
   // Easter egg: no setting for this one.
@@ -1004,7 +1060,7 @@ function notifyItems() {
     const d = addDays(t, i), b = bedGoal(d), at = fromMin(toMin(b) - 30), on = at < '12:00' ? addDays(d, 1) : d;
     if (on > t || (on === t && at > timeStr())) items.push({ id: 'bed-' + d, date: on, at, ttl: 1800, keep: 30 + sleepGoal(), title: '🌙 Bedtime in 30 min', body: `Bed by ${fmtTime(b)} to get your sleep in.` });
   }
-  if (nOn('n_game')) GAMES.filter(g => g.date >= t).slice(0, 10).forEach(g =>
+  if (nOn('n_game')) GAMES.filter(g => g.date >= t && !g.postponed).slice(0, 10).forEach(g =>
     items.push({ id: 'game-' + g.date, date: g.date, at: g.time && g.time < '12:00' ? hmMinus(g.time, 180) : '09:00', ttl: 10800, keep: 900, title: '🏀 GAME DAY', body: `${vsAt(g)} ${g.opp} · ${gameTime(g)}${g.venue ? ` · ${g.venue}` : ''}` }));
   if (nOn('n_week')) { const dow = parseDate(t).getDay(), sun = addDays(t, (7 - dow) % 7); items.push({ id: 'week-' + sun, date: sun, at: '18:00', ttl: 10800, keep: 360, open: 'wrapped', title: '📊 Your week', body: 'Sleep, recovery and fueling, all in one card.' }); }
   const meds = medList();
@@ -1060,6 +1116,7 @@ function notifyCard() {
     <h3>🔔 Notifications</h3>
     <p class="muted small">${intro}</p>
     ${ui.notifyOn ? '' : `<button class="btn primary full" data-act="notifyOn">Turn on notifications</button>`}
+    <button class="switch-row all-row" data-act="toggleAll"><span class="grow"><b>All reminders</b><div class="muted tiny">Turn every one below on or off at once.</div></span><span class="tick ${allNotifsOn() ? 'on' : ''}">${allNotifsOn() ? '✓' : ''}</span></button>
     ${NOTIFS.filter(n => n[0] !== 'n_period' || periodOn()).map(([k, l, sub, def]) => switchRow(k, l, sub, def) + (k === 'n_meds' && nOn('n_meds') ? medsTimeRow() : '')).join('')}
   </section>`;
 }
@@ -1253,7 +1310,7 @@ function recoveryHelpers() {
       dinner: last ? last < '19:00' : null,
       bed: d.bed ? nearPlan(d) : null,
       water: pd.water != null ? pd.water >= g.water : null,
-      caffeine: ents.length ? !ents.some(e => e.time >= '14:00' && entryTags(e).includes('Caffeine')) : null,
+      caffeine: ents.length ? !ents.some(e => e.time >= '14:00' && hasCaf(e)) : null,
       protein: t ? t.p >= g.p * 0.95 : null,
       sleep: d.sleepMin != null ? d.sleepMin >= sleepGoal() : null,
     } });
@@ -1289,10 +1346,16 @@ function askContext() {
   const opt = OPTIONAL_MACROS.filter(([k]) => tracks(k)).map(([k, l]) => `${g[k]} g ${l.toLowerCase()}`), off = OPTIONAL_MACROS.filter(([k]) => !tracks(k)).map(([, l]) => l.toLowerCase());
   lines.push(`Daily goals: ${[`${g.cal} cal`, `${g.p} g protein`, ...opt, `${g.water} oz water`].join(', ')}. Sleep goal ${fmtSleep(sleepGoal())}.${p.goalsGuess ? " These goals are Pulse's generic starting point, NOT from her dietitian." : ''}${off.length ? ` She chose not to track ${off.join(' or ')}, so don't coach on those goals.` : ''}`);
   if (meds) lines.push(`Meds & vitamins: ${meds}.`);
+  { const ev = eventsOn(t).filter(e => !e.game), tm = eventsOn(addDays(t, 1)).filter(e => !e.game); if (ev.length || tm.length) lines.push(`Schedule today: ${ev.map(e => `${e.start || 'all day'} ${e.title}`).join('; ') || 'nothing'}. Tomorrow: ${tm.map(e => `${e.start || 'all day'} ${e.title}`).join('; ') || 'nothing'}.`); }
+  { const td = todosSoon(); if (td.length) lines.push(`To-dos due soon: ${td.map(x => `${x.title}${x.cls ? ` (${x.cls})` : ''} due ${x.due}${x.time ? ' ' + x.time : ''}`).join('; ')}.`); }
+  { const ip = injuryPatterns().filter(x => x.found.length); if (ip.length) lines.push(`Injury patterns the app found: ${ip.map(x => `${x.name} worse ${x.found.map(f => f.label).join(', ')}`).join('; ')}.`); }
+  if (brickNow()) lines.push(`Her phone is bricked right now (${dur(brickMin(brickNow()))} so far).`);
   lines.push('She weighs almost everything she eats on a food scale, so logged grams are exact. Give portion advice in grams.');
   const tp = bedPlan(t); lines.push(`Tonight: sleep need ${fmtSleep(tp.need.min)}${tp.need.why.length ? ` (${tp.need.why.join(', ')})` : ''}, bed by ${fmtTime(tp.bed)}, up at ${fmtTime(tp.wake)}.`);
   const r = readiness(t); if (r) lines.push(`Readiness today: ${r.t} (${r.facts.join(', ')}).`);
-  const next = GAMES.filter(x => x.date >= t && !x.result).slice(0, 3).map(x => `${x.date} ${vsAt(x)} ${x.opp} ${gameTime(x)}`);
+  const pp = GAMES.filter(x => x.postponed && x.date >= addDays(t, -14));
+  if (pp.length) lines.push(`Postponed games (new date not set yet): ${pp.map(x => `${vsAt(x)} ${x.opp}, was ${x.date}`).join('; ')}.`);
+  const next = GAMES.filter(x => x.date >= t && !x.result && !x.postponed).slice(0, 3).map(x => `${x.date} ${vsAt(x)} ${x.opp} ${gameTime(x)}`);
   const past = GAMES.filter(x => x.result).slice(-3).map(x => `${x.date} ${vsAt(x)} ${x.opp}: ${x.result}`);
   if (next.length) lines.push(`Next games: ${next.join('; ')}.`);
   if (past.length) lines.push(`Recent results: ${past.join('; ')}.`);
@@ -1341,6 +1404,7 @@ function askContext() {
       parts.push(`food: ${ents.map(e => `${e.time || ''} ${e.name}`.trim()).slice(0, 14).join(', ')}`);
     }
     if (day.water) parts.push(`water ${day.water} oz`);
+    { const cf = ents.filter(hasCaf); if (cf.length) parts.push(`caffeine ${fmt(cf.reduce((s, e) => s + cafOf(e), 0))} mg (last at ${cf[cf.length - 1].time || '?'})`); }
     if (day.sleepMin != null || day.bed) parts.push(`slept ${day.sleepMin != null ? fmtSleep(day.sleepMin) : '?'}${day.bed ? ` (bed ${day.bed}, up ${day.wake || '?'})` : ''}`);
     const w = [day.recovery != null && `recovery ${day.recovery}%`, day.hrv != null && `HRV ${day.hrv}`, day.rhr != null && `RHR ${day.rhr}`, day.strain != null && `strain ${day.strain}`, day.burned != null && `burned ${day.burned}`, day.active != null && `active cal ${day.active}`, day.resting != null && `resting cal ${day.resting}`,day.steps != null && `steps ${day.steps}`].filter(Boolean);
     if (w.length) parts.push(w.join(', '));
@@ -1348,6 +1412,9 @@ function askContext() {
     const gm = gameOn(d); if (gm) parts.push(`GAME ${vsAt(gm)} ${gm.opp}${gm.result ? ` ${gm.result}` : ''}`);
     if (medList().length && day.meds) parts.push(`meds ${Object.keys(day.meds).length}/${medList().length}`);
     if (day.period) parts.push(`period day${day.periodFeel?.length ? ` (${day.periodFeel.join(', ')})` : ''}`);
+    { const pn = painOf(d); if (pn.length) parts.push(`body: ${pn.map(x => `${spotName(x)} ${x.kind.toLowerCase()} ${x.pain}/10${x.notes ? ` "${x.notes}"` : ''}`).join(', ')}`); }
+    { const bm = brickOn(d); if (bm >= 1) parts.push(`phone bricked ${dur(bm)}`); }
+    if (day.photos?.length) parts.push(`journal photos: ${day.photos.map(p => p.desc || 'photo').join(' | ')}`);
     if (day.weight != null) parts.push(`weight ${day.weight} lb`);
     st.forEach(e => parts.push(`STOMACH ${e.time} severity ${e.severity}/5: ${(e.symptoms || []).join(', ')}${e.context?.length ? ` [${e.context.join(', ')}]` : ''}${e.notes ? ` "${e.notes}"` : ''}`));
     fl.forEach(e => parts.push(`FELT OFF ${e.time} level ${e.level}/5: ${(e.feelings || []).join(', ')}${e.context?.length ? ` [${e.context.join(', ')}]` : ''}${e.notes ? ` "${e.notes}"` : ''}`));
@@ -1483,7 +1550,8 @@ const tourDue = () => DEMO ? !localStorage.getItem('pulseTourDemo') : !NEW && !p
 function journalCard(day) {
   return `<section class="card tap" data-act="journal">
     <div class="card-head"><h3>📓 Journal <span class="lock">🔒</span></h3><span class="link">${day.notes ? 'Edit' : 'Write'}</span></div>
-    ${day.notes ? `<p class="journal-txt">${esc(day.notes)}</p>` : `<p class="muted small">Practice, mood, anything. Just for you.</p>`}
+    ${day.notes ? `<p class="journal-txt">${esc(day.notes)}</p>` : day.photos?.length ? '' : `<p class="muted small">Practice, mood, anything. Just for you.</p>`}
+    ${day.photos?.length ? `<div class="j-photos">${day.photos.slice(0, 4).map(p => `<img src="${p.img}" alt="">`).join('')}</div>` : ''}
     <button class="talk-btn" data-act="journalTalk">🎙️ Talk instead of typing</button>
   </section>`;
 }
@@ -1494,6 +1562,9 @@ function openJournal(date = ui.date, talk = false) {
     title: `Journal · ${fmtDay(date)}`, full: true, lock: true,
     body: `<button class="talk-big" data-x="talk"><span class="talk-dot"></span><span id="tl">🎙️ Tap and talk</span></button>
       <textarea id="jt" class="journal-in" rows="10" placeholder="How did today go?">${esc(d.notes || '')}</textarea>
+      <div class="j-photos edit" id="jp"></div>
+      <label class="btn soft full">📷 Add a photo<input type="file" accept="image/*" hidden id="jpi"></label>
+      <p class="muted tiny center">Ask Pulse can see what's in your photos.</p>
       <p class="muted tiny center">🔒 Just for you. Stays on this phone.</p>`,
     footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
   });
@@ -1518,8 +1589,12 @@ function openJournal(date = ui.date, talk = false) {
     try { rec.start(); btn.classList.add('on'); s.$('#tl').textContent = 'Listening… tap to stop'; } catch { stop(); ta.focus(); }
   }
   s.on('click', '[data-x="talk"]', () => rec ? stop() : start());
-  s.on('click', '[data-x="save"]', () => { stop(); d.notes = ta.value.trim(); db.put('days', d); s.close(); toast('Saved'); });
+  s.on('click', '[data-x="save"]', () => { stop(); db.put('days', { ...(db.get('days', date) || d), notes: ta.value.trim() }); s.close(); toast('Saved'); });
   s.on('click', '[data-x="close"]', stop);
+  const drawPh = () => { s.$('#jp').innerHTML = (db.get('days', date)?.photos || []).map(p => `<div class="jp"><img src="${p.img}" alt=""><button data-x="rmph" data-id="${p.id}" aria-label="Remove">✕</button></div>`).join(''); };
+  s.on('change', '#jpi', async el => { const f = el.files?.[0]; if (!f) return; toast('Adding photo…'); try { const p = addJournalPhoto(date, f); setTimeout(drawPh, 300); await p; drawPh(); } catch (e) { toast(e.message); } el.value = ''; });
+  s.on('click', '[data-x="rmph"]', el => { const cur = { ...(db.get('days', date) || d) }; cur.photos = (cur.photos || []).filter(p => p.id !== el.dataset.id); db.put('days', cur); drawPh(); });
+  drawPh();
   if (talk) start(); else ta.focus();
 }
 
@@ -1634,11 +1709,40 @@ function fuelCard(d, day, t, g, ents) {
 function waterCard(day, g) {
   const w = day.water || 0, pct = Math.min(100, w / (g.water || 1) * 100);
   return `<section class="card water">
-    <div class="card-head"><h3>💧 Water</h3><span class="muted"><b class="tx">${fmt(w)}</b> / ${fmt(g.water)} oz</span></div>
+    <div class="card-head"><h3>💧 Water</h3><button class="link muted" data-act="waterAmt"><b class="tx">${fmt(w)}</b> / ${fmt(g.water)} oz</button></div>
     <div class="w-track"><i style="width:${pct}%"></i></div>
     <div class="w-btns"><button data-act="water" data-oz="-8" aria-label="Remove 8 oz">−</button>
-      <button data-act="water" data-oz="8">+8</button><button data-act="water" data-oz="16">+16</button><button data-act="water" data-oz="32">+32</button></div>
+      <button data-act="water" data-oz="8">+8</button><button data-act="water" data-oz="16">+16</button><button data-act="water" data-oz="32">+32</button><button data-act="waterAmt" aria-label="Type an amount">✏️</button></div>
+    ${cafToday(day) ? `<div class="caf-row">⚡ <b>${fmt(cafToday(day))} mg</b> caffeine ${day.id === dateStr() ? 'today' : ''}</div>` : ''}
   </section>`;
+}
+const cafToday = day => dayEntries(day.id || ui.date).reduce((s, e) => s + cafOf(e), 0);
+// Type any amount: add it, take it away, or set the day's total.
+function openWater() {
+  const cur = db.get('days', ui.date)?.water || 0;
+  let unit = 'oz';
+  const s = openSheet({
+    title: '💧 Water',
+    body: `<p class="muted small center">So far: <b>${fmt(cur)} oz</b></p>
+      <div class="amt-input"><input id="wa" type="text" inputmode="decimal" placeholder="0" autocomplete="off" aria-label="Amount">
+        <div class="seg unit"><button data-x="u" data-u="oz" class="on">oz</button><button data-x="u" data-u="ml">ml</button></div></div>`,
+    footer: `<button class="btn ghost" data-x="sub">− Take away</button><button class="btn soft" data-x="set">Set total</button><button class="btn primary grow" data-x="add">＋ Add</button>`,
+  });
+  const oz = () => { const v = num(s.$('#wa').value); return unit === 'ml' ? v / 29.574 : v; };
+  s.on('click', '[data-x="u"]', el => { unit = el.dataset.u; s.$$('[data-x="u"]').forEach(b => b.classList.toggle('on', b === el)); s.$('#wa').focus(); });
+  const go = mode => {
+    const v = Math.round(oz() * 10) / 10;
+    if (!(v > 0) && mode !== 'set') { s.$('#wa').focus(); return toast('Type an amount'); }
+    const d = { ...(db.get('days', ui.date) || { id: ui.date, date: ui.date }) };
+    d.water = Math.max(0, mode === 'set' ? v : (d.water || 0) + (mode === 'sub' ? -v : v));
+    db.put('days', d);
+    s.close();
+    toast(`💧 ${fmt(d.water)} oz today`);
+  };
+  s.on('click', '[data-x="add"]', () => go('add'));
+  s.on('click', '[data-x="sub"]', () => go('sub'));
+  s.on('click', '[data-x="set"]', () => go('set'));
+  s.$('#wa').focus();
 }
 
 function bodyCard(d) {
@@ -1869,6 +1973,8 @@ function screenTrends() {
     ${top.length ? `<section class="card"><h3>Most-logged foods</h3>${top.map(([name, c]) => `<div class="kv-row"><span>${esc(name)}</span><span class="muted">${c.n}×</span></div>`).join('')}</section>` : ''}
 
     ${recoveryCard()}
+    ${injuryTrends()}
+    ${brickTrends(dates)}
     ${feelTrends(dates)}
     ${gutTrends(dates)}
     ${cycleTrends()}
@@ -2014,7 +2120,8 @@ function screenMe() {
       <div class="grow"><input class="name-in" value="${esc(p.name || '')}" placeholder="Your name" data-change="name" aria-label="Your name">
       <div class="muted small">${cloud ? esc(cloud.email) : '🔒 Private. Stays on this phone.'}</div></div>
     </section>
-    <button class="btn soft full" data-act="tour">🧭 Show me around</button>
+    <div class="btn-col"><button class="btn soft" data-act="calLinks">🔗 Linked calendars${calLinks().length ? ` (${calLinks().length})` : ''}</button><button class="btn soft" data-act="games">🏀 Games schedule</button></div>
+    <button class="btn soft full mt" data-act="tour">🧭 Show me around</button>
     ${DEMO ? '<button class="btn soft full mt" data-act="winPreview">🏆 Preview the win screen</button>' : ''}
 
     <section class="card">
@@ -2054,8 +2161,9 @@ function screenMe() {
       </div>
       <p class="muted tiny">${plural(db.list('foods').length, 'food')} · ${plural(db.list('recipes').length, 'recipe')} · ${plural(new Set(db.list('entries').map(e => e.date)).size, 'day')} logged</p>
     </section>
-    ${DEV ? `<section class="card dev-card"><h3>🛠️ Developer mode</h3><p class="muted small">This is the test version with sample data. Carly's app doesn't change until you push it.</p>
-      <button class="btn soft full" data-act="devLeave">Leave developer mode</button></section>` : ''}
+    ${DEV ? `<section class="card dev-card"><h3>🛠️ Developer mode</h3><p class="muted small">Test version with sample data. Carly's app doesn't change until you say push. Tap any change to see it.</p>
+      <div class="whatsnew">${WHATS_NEW.map(([k, t, d], i) => `<button class="wn" data-act="devShow" data-k="${k}"><span class="wn-n">${i + 1}</span><span class="grow"><b>${t}</b><span class="muted tiny">${d}</span></span><span class="chev">›</span></button>`).join('')}</div>
+      <button class="btn soft full mt" data-act="devLeave">Leave developer mode</button></section>` : ''}
     <button class="ver" data-act="verTap">Pulse ${APP_VERSION}${DEV ? ' · dev' : ''}</button>
 
 
@@ -2071,6 +2179,19 @@ const acts = {
   editEntry: d => editEntry(d.id),
   copyMeal: d => copyMeal(d.meal),
   water: d => addWater(+d.oz),
+  waterAmt: () => openWater(),
+  schedule: () => openSchedule(),
+  eventEdit: d => openEvent(d.id || null),
+  todoEdit: d => openTodo(d.id || null),
+  todoDone: d => toggleTodo(d.id),
+  games: () => openGames(),
+  calLinks: () => openCalLinks(),
+  brickStart: () => { if (!brickNow()) { db.put('brick', { id: uid(), start: Date.now(), end: null }); buzz(); toast('🧱 Bricked. Timer started'); } },
+  brickStop: () => { const b = brickNow(); if (b) { db.put('brick', { ...b, end: Date.now() }); toast(`🧱 ${dur(brickMin(b))} bricked`); } },
+  brickLog: () => openBrickLog(),
+  injuryLog: d => openInjury(d.id || null),
+  nudge: d => showNudge(d.k),
+  devShow: d => devShow(d.k),
   body: () => openBody(ui.date),
   gut: () => openGut({ date: ui.date }),
   editGut: d => openGut({ ep: db.get('stomach', d.id) }),
@@ -2111,6 +2232,7 @@ const acts = {
   healthPaste: () => healthPaste(),
   healthGuide: () => openHealthGuide(),
   toggle: d => saveProfile({ [d.k]: !(profile()?.[d.k] ?? d.def === '1') }),
+  toggleAll: () => { const on = !allNotifsOn(); saveProfile(Object.fromEntries(shownNotifs().map(n => [n[0], on]))); toast(on ? 'All reminders on' : 'All reminders off'); },
   trackTog: d => saveProfile({ track: { ...(profile()?.track || {}), [d.k]: !tracks(d.k) } }),
   period: d => setPeriod(d.f),
   periodFeel: d => togglePeriodFeel(d.k),
@@ -2406,6 +2528,7 @@ function openQuick({ entry = null, meal = defaultMeal(), date = ui.date }) {
         <div class="field"><label>Protein (g)</label><input id="qp" inputmode="decimal" value="${fmtIn(m.p)}"></div>
         <div class="field"><label>Carbs (g)</label><input id="qc" inputmode="decimal" value="${fmtIn(m.c)}"></div>
         <div class="field"><label>Fat (g)</label><input id="qf" inputmode="decimal" value="${fmtIn(m.f)}"></div>
+        <div class="field"><label>Caffeine (mg)</label><input id="qcaf" inputmode="decimal" value="${fmtIn(m.caf)}" placeholder="optional"></div>
       </div>
       <div class="field"><label>Meal</label><div class="chips">${MEALS.map(x => `<button class="chip ${x.id === curMeal ? 'on' : ''}" data-x="meal" data-m="${x.id}">${x.icon} ${x.name}</button>`).join('')}</div></div>`,
     footer: `${entry ? `<button class="btn ghost danger-t" data-x="del">Delete</button>` : ''}<button class="btn primary grow" data-x="save">${entry ? 'Save' : 'Add'}</button>`,
@@ -2414,10 +2537,11 @@ function openQuick({ entry = null, meal = defaultMeal(), date = ui.date }) {
   s.on('click', '[data-x="del"]', () => { db.remove('entries', entry.id); s.close(); });
   s.on('click', '[data-x="save"]', () => {
     let p = num(s.$('#qp').value), c = num(s.$('#qc').value), f = num(s.$('#qf').value), cal = num(s.$('#qcal').value);
+    const caf = num(s.$('#qcaf').value);
     if (!cal) cal = p * 4 + c * 4 + f * 9;
-    if (!cal) return toast('Add at least calories');
+    if (!cal && !caf) return toast('Add at least calories');
     const e = entry ? { ...entry } : { id: uid(), date, kind: 'quick', time: defaultTime(date, curMeal) };
-    Object.assign(e, { name: s.$('#qn').value.trim() || 'Quick add', grams: null, meal: curMeal, macros: { cal, p, c, f, fiber: 0, sugar: 0, sodium: 0 } });
+    Object.assign(e, { name: s.$('#qn').value.trim() || 'Quick add', grams: null, meal: curMeal, macros: { cal, p, c, f, fiber: 0, sugar: 0, sodium: 0, caf } });
     db.put('entries', e);
     s.close();
     toast(entry ? 'Saved' : `Added · ${fmt(cal)} cal`);
@@ -2494,7 +2618,7 @@ function openFoodForm({ food = null, prefill = {}, onSaved } = {}) {
         ${fld('servingG', 'Serving size *', 'g', '28')}
         <div class="field"><label for="ff-sl">Serving name</label><input id="ff-sl" data-t="servingLabel" value="${esc(f.servingLabel || '')}" placeholder="1 cup, 2 tbsp"></div>
         ${fld('cal', 'Calories *', 'cal')}${fld('p', 'Protein', 'g')}${fld('c', 'Total carbs', 'g')}${fld('f', 'Total fat', 'g')}
-        ${fld('fiber', 'Fiber', 'g')}${fld('sugar', 'Total sugars', 'g')}${fld('sodium', 'Sodium', 'mg')}
+        ${fld('fiber', 'Fiber', 'g')}${fld('sugar', 'Total sugars', 'g')}${fld('sodium', 'Sodium', 'mg')}${fld('caf', 'Caffeine', 'mg', '0')}
       </div>
       <div class="calc-hint" id="hint"></div>
       <div class="field"><label for="ff-pieces">Pieces per serving <span class="muted">— optional, for things you count</span></label><div class="unit-in"><input id="ff-pieces" data-k="pieces" inputmode="decimal" value="${esc(f.pieces ?? '')}" placeholder="${pieceInfo(f) ? fmt(pieceInfo(f).n) + ' (from the serving name)' : 'e.g. 13'}"><span>pcs</span></div></div>
@@ -2563,6 +2687,7 @@ function openFoodForm({ food = null, prefill = {}, onSaved } = {}) {
   s.on('click', '[data-x="save"]', () => {
     s.$$('[data-t]').forEach(i => { f[i.dataset.t] = i.value.trim(); });
     s.$$('[data-k]').forEach(i => { f[i.dataset.k] = optNum(i.value) ?? ''; });
+    if (num(f.caf) > 0) tags.add('Caffeine');
     f.tags = [...tags];
     f.gf = gfSel;
     f.fav = s.$('#ff-fav').checked;
@@ -3043,7 +3168,7 @@ function openCalendar() {
     const gms = GAMES.filter(g => g.date.startsWith(month));
     s.$('#calGames').innerHTML = gms.length ? `<h4 class="sec">🏀 Games this month</h4>${gms.map(g => `<button class="row" data-x="day" data-d="${g.date}">
       <img class="team-logo sm" src="${teamLogo(g)}" alt=""><div class="row-main"><div class="row-name">${vsAt(g)} ${esc(g.opp)}</div>
-      <div class="row-sub">${parseDate(g.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · ${g.result ? esc(g.result) : gameTime(g)}${g.home ? ' · Home' : ' · ' + esc(g.where)}</div></div><span class="chev">›</span></button>`).join('')}` : '';
+      <div class="row-sub">${parseDate(g.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · ${g.result ? esc(g.result) : g.postponed ? 'Postponed' : gameTime(g)}${g.home ? ' · Home' : ' · ' + esc(g.where)}</div></div><span class="chev">›</span></button>`).join('')}` : '';
   }
   const shift = n => { const d = parseDate(month + '-01'); d.setMonth(d.getMonth() + n); month = dateStr(d).slice(0, 7); draw(); };
   s.on('click', '[data-x="prev"]', () => shift(-1));
@@ -3353,6 +3478,7 @@ async function afterLogin(user) {
 function openFromNote(what) { if (what === 'wrapped') setTimeout(() => acts.wrapped({}), 700); }
 navigator.serviceWorker?.addEventListener('message', e => openFromNote(e.data?.open));
 function startApp({ first = false } = {}) {
+  applySchedule();
   applyTheme();
   appEl.classList.add('ready');
   render();
@@ -3364,9 +3490,534 @@ function startApp({ first = false } = {}) {
   notify.clearStale(handledNotes());
   if (DEMO && new URLSearchParams(location.search).has('win')) setTimeout(() => acts.winPreview(), 2200);
   if (new URLSearchParams(location.search).get('open') === 'wrapped') { openFromNote('wrapped'); history.replaceState(null, '', location.pathname); }
-  notify.isOn().then(on => { ui.notifyOn = on; if (ui.tab === 'me') queueRender(); });
+  notify.isOn().then(on => {
+    ui.notifyOn = on;
+    if (ui.tab === 'me') queueRender();
+    let due = false;
+    try { due = tourDue(); } catch {}
+    if (!quiet && !first && !due) setTimeout(maybeNudge, 2600);
+  });
   refreshResults();
+  syncCals();
+  pullBrick();
   scheduleNotify();
+}
+
+// ---------- games list (editable) ----------
+function openGames() {
+  const t = dateStr();
+  const s = openSheet({
+    title: '🏀 Games', full: true,
+    body: `<p class="muted small">Updates on its own when the Pilots move or postpone a game. Tap one to change it yourself.</p><div id="gl"></div>`,
+  });
+  const draw = () => {
+    s.$('#gl').innerHTML = GAMES.map(g => `<button class="row ${g.date < t ? 'past' : ''}" data-x="g" data-k="${esc(g.key)}"><img class="team-logo sm" src="${teamLogo(g)}" alt="">
+      <div class="row-main"><div class="row-name">${vsAt(g)} ${esc(g.opp)}${g.edited ? ' <span class="muted tiny">· edited</span>' : ''}</div>
+      <div class="row-sub">${parseDate(g.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · ${g.result ? esc(g.result) : g.postponed ? '<b class="warn-t">Postponed</b>' : gameTime(g)}</div></div><span class="chev">›</span></button>`).join('');
+  };
+  s.on('click', '[data-x="g"]', el => openGameEdit(el.dataset.k, draw));
+  draw();
+}
+function openGameEdit(key, done) {
+  const g = GAMES.find(x => x.key === key);
+  if (!g) return;
+  const s = openSheet({
+    title: `${vsAt(g)} ${g.opp}`,
+    body: `<div class="grid2"><div class="field"><label>Date</label><input type="date" id="gd" value="${g.date}"></div>
+      <div class="field"><label>Tip-off (your time)</label><input type="time" id="gt" value="${g.time || ''}"></div></div>
+      <div class="field"><label>Venue</label><input id="gv" value="${esc(g.venue || '')}" placeholder="${esc(g.where || '')}"></div>
+      <label class="check"><input type="checkbox" id="gp" ${g.postponed ? 'checked' : ''}> Postponed (no new date yet)</label>
+      ${g.edited ? `<button class="btn ghost full" data-x="reset">Undo my changes</button>` : ''}`,
+    footer: `<button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  const put = e => { const all = { ...(profile()?.gameEdits || {}) }; if (e) all[key] = e; else delete all[key]; saveProfile({ gameEdits: all }); applySchedule(); scheduleNotify(); s.close(); done?.(); };
+  s.on('click', '[data-x="reset"]', () => put(null));
+  s.on('click', '[data-x="save"]', () => put({ date: s.$('#gd').value || g.date, time: s.$('#gt').value || null, venue: s.$('#gv').value.trim(), postponed: s.$('#gp').checked }));
+}
+
+// ---------- schedule: linked calendars + her own events + to-dos ----------
+const p2 = n => String(n).padStart(2, '0');
+// Wall-clock time in a named zone -> a real Date (same trick as ptToLocal).
+function zonedDate(y, mo, d, h, mi, tz) {
+  const guess = Date.UTC(y, mo - 1, d, h, mi);
+  try {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }).formatToParts(new Date(guess)).map(x => [x.type, +x.value]));
+    return new Date(guess - (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - guess));
+  } catch { return new Date(y, mo - 1, d, h, mi); }
+}
+function icsWhen(f) {
+  const m = f?.v.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})\d{0,2}(Z)?)?/);
+  if (!m) return null;
+  if (!m[4]) return { date: `${m[1]}-${m[2]}-${m[3]}`, time: null };
+  const tz = (f.p.match(/TZID=([^;:]+)/) || [])[1];
+  const d = m[6] ? new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5])) : tz ? zonedDate(+m[1], +m[2], +m[3], +m[4], +m[5], tz) : new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5]);
+  return { date: dateStr(d), time: `${p2(d.getHours())}:${p2(d.getMinutes())}` };
+}
+const icsText = v => String(v || '').replace(/\\n/gi, ' ').replace(/\\([,;\\])/g, '$1').trim();
+// Reads an .ics file into events between two dates, repeating ones included.
+function parseICS(text, from, to) {
+  const out = [];
+  let ev = null;
+  for (const l of text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/)) {
+    if (l === 'BEGIN:VEVENT') ev = { ex: new Set() };
+    else if (l === 'END:VEVENT') { if (ev) out.push(...icsExpand(ev, from, to)); ev = null; }
+    else if (ev) {
+      const i = l.indexOf(':');
+      if (i < 0) continue;
+      const [name, ...ps] = l.slice(0, i).split(';'), f = { v: l.slice(i + 1), p: ps.join(';') };
+      if (name === 'EXDATE') f.v.split(',').forEach(v => { const w = icsWhen({ v, p: f.p }); if (w) ev.ex.add(w.date); });
+      else ev[name] = f;
+    }
+  }
+  return out;
+}
+function icsExpand(ev, from, to) {
+  const st = icsWhen(ev.DTSTART);
+  if (!st || ev.STATUS?.v === 'CANCELLED') return [];
+  const en = icsWhen(ev.DTEND);
+  const base = { uid: ev.UID?.v || uid(), title: icsText(ev.SUMMARY?.v) || 'Event', where: icsText(ev.LOCATION?.v), start: st.time, end: en && en.date === st.date ? en.time : null };
+  const one = d => ({ ...base, id: base.uid + '@' + d, date: d });
+  const rr = ev.RRULE?.v;
+  if (!rr) return st.date >= from && st.date <= to ? [one(st.date)] : [];
+  const r = Object.fromEntries(rr.split(';').map(x => x.split('=')));
+  const iv = +(r.INTERVAL || 1), until = r.UNTIL ? icsWhen({ v: r.UNTIL, p: '' })?.date || '9999' : '9999', count = +(r.COUNT || 0);
+  const by = r.BYDAY ? r.BYDAY.split(',').map(x => ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'].indexOf(x.slice(-2))) : null;
+  const out = [], s0 = parseDate(st.date);
+  let n = 0;
+  for (let d = st.date < addDays(from, -800) ? addDays(from, -800) : st.date; d <= to && d <= until; d = addDays(d, 1)) {
+    const diff = Math.round((parseDate(d) - s0) / 864e5), dow = parseDate(d).getDay();
+    const hit = r.FREQ === 'DAILY' ? diff % iv === 0
+      : r.FREQ === 'WEEKLY' ? (by ? by.includes(dow) : dow === s0.getDay()) && Math.floor((diff + s0.getDay()) / 7) % iv === 0
+      : r.FREQ === 'MONTHLY' ? d.slice(8) === st.date.slice(8) : d === st.date;
+    if (!hit) continue;
+    if (count && ++n > count) break;
+    if (d >= from && !ev.ex.has(d)) out.push(one(d));
+  }
+  return out;
+}
+const calLinks = () => profile()?.calLinks || [];
+const calCache = id => { try { return JSON.parse(localStorage.getItem('pulseCal-' + id) || 'null'); } catch { return null; } };
+async function syncCal(link, force = false) {
+  const c = calCache(link.id);
+  if (!force && c && Date.now() - c.at < 3600e3) return c;
+  const r = await fetch(CONFIG_PUSH() + '/ics?url=' + encodeURIComponent(link.url));
+  if (!r.ok) throw new Error(r.status === 422 ? "That link isn't a calendar" : "Couldn't reach that calendar");
+  const t = dateStr(), events = parseICS(await r.text(), addDays(t, -30), addDays(t, 120)).map(e => ({ ...e, src: link.id }));
+  const out = { at: Date.now(), events };
+  try { localStorage.setItem('pulseCal-' + link.id, JSON.stringify(out)); } catch {}
+  return out;
+}
+async function syncCals(force = false) {
+  const before = JSON.stringify(calLinks().map(l => calCache(l.id)?.at));
+  await Promise.allSettled(calLinks().map(l => syncCal(l, force)));
+  if (JSON.stringify(calLinks().map(l => calCache(l.id)?.at)) !== before) queueRender();
+}
+// Everything on a day: linked events (minus ones she edited or hid) plus her own.
+function eventsOn(date) {
+  const own = db.list('events'), gone = new Set(own.map(e => e.replaces).filter(Boolean));
+  const linked = calLinks().flatMap(l => (calCache(l.id)?.events || []).filter(e => e.date === date && !gone.has(e.id)).map(e => ({ ...e, cal: l.name })));
+  const g = gameOn(date), game = g && !g.result ? [{ id: 'game', date, start: g.time, title: `🏀 ${vsAt(g)} ${g.opp}`, where: g.venue || g.where, game: true }] : [];
+  return [...game, ...linked, ...own.filter(e => e.date === date && !e.deleted)].sort((a, b) => (a.start || '00:00').localeCompare(b.start || '00:00'));
+}
+const todosDue = date => db.list('todos').filter(t => t.due === date).sort((a, b) => (a.done - b.done) || (a.time || '99').localeCompare(b.time || '99'));
+const todosSoon = () => db.list('todos').filter(t => !t.done && t.due && t.due <= addDays(dateStr(), 3)).sort((a, b) => a.due.localeCompare(b.due) || (a.time || '99').localeCompare(b.time || '99'));
+const evTime = e => e.start ? fmtTime(e.start) + (e.end ? `<small>to ${fmtTime(e.end)}</small>` : '') : 'All day';
+const dueTxt = t => { const d = Math.round((parseDate(t.due) - parseDate(dateStr())) / 864e5); return (d < 0 ? 'Overdue' : d === 0 ? 'Today' : d === 1 ? 'Tomorrow' : parseDate(t.due).toLocaleDateString(undefined, { weekday: 'short' })) + (t.time ? ' ' + fmtTime(t.time) : ''); };
+function todoRow(t) {
+  return `<div class="todo ${t.done ? 'done' : ''}"><button class="todo-box" data-act="todoDone" data-id="${t.id}" aria-label="Done">${t.done ? '✓' : ''}</button>
+    <button class="todo-main" data-act="todoEdit" data-id="${t.id}"><b>${esc(t.title)}</b><span class="muted tiny">${[t.cls, t.due ? dueTxt(t) : ''].filter(Boolean).map(esc).join(' · ')}</span></button></div>`;
+}
+function scheduleCard(d) {
+  if (d !== dateStr()) return '';
+  const now = timeStr(), evs = eventsOn(d).filter(e => !e.end || e.end >= now || !e.start), soon = todosSoon();
+  const tom = !evs.length ? eventsOn(addDays(d, 1)) : [];
+  return `<section class="card sched-card">
+    <div class="card-head"><h3>📅 Schedule</h3><button class="link" data-act="schedule">Week ›</button></div>
+    ${evs.length ? evs.slice(0, 5).map(e => `<button class="ev ${e.game ? 'game' : ''}" data-act="${e.game ? 'games' : 'eventEdit'}" data-id="${esc(e.id)}"><span class="ev-t">${evTime(e)}</span><span class="grow">${esc(e.title)}${e.where ? `<span class="muted tiny"> · ${esc(e.where)}</span>` : ''}</span></button>`).join('')
+      : `<p class="muted small">${tom.length ? `Nothing else today. Tomorrow starts with ${esc(tom[0].title)} at ${tom[0].start ? fmtTime(tom[0].start) : 'all day'}.` : 'Nothing on the schedule today.'}</p>`}
+    ${soon.length ? `<div class="due-head">Due soon</div>${soon.slice(0, 4).map(todoRow).join('')}` : ''}
+    <div class="btn-row mt"><button class="btn soft grow" data-act="eventEdit">＋ Event</button><button class="btn soft grow" data-act="todoEdit">＋ To-do</button></div>
+  </section>`;
+}
+function openSchedule(start = dateStr()) {
+  let day = start;
+  const s = openSheet({
+    title: '📅 Schedule', full: true,
+    body: `<div class="wk" id="wk"></div><div id="sd"></div>
+      <h4 class="sec">To-dos</h4><div id="tl"></div>
+      <div class="btn-col mt"><button class="btn soft" data-x="links">🔗 Linked calendars${calLinks().length ? ` (${calLinks().length})` : ''}</button><button class="btn soft" data-x="games">🏀 Games</button></div>`,
+    footer: `<button class="btn soft grow" data-x="ev">＋ Event</button><button class="btn primary grow" data-x="td">＋ To-do</button>`,
+  });
+  const draw = () => {
+    const t = dateStr();
+    s.$('#wk').innerHTML = Array.from({ length: 14 }, (_, i) => addDays(t, i - 1)).map(d => { const x = parseDate(d); return `<button class="wk-d ${d === day ? 'on' : ''} ${d === t ? 'today' : ''}" data-x="day" data-d="${d}"><span>${x.toLocaleDateString(undefined, { weekday: 'narrow' })}</span><b>${x.getDate()}</b>${eventsOn(d).length || todosDue(d).some(x => !x.done) ? '<i></i>' : ''}</button>`; }).join('');
+    const evs = eventsOn(day), tds = todosDue(day);
+    s.$('#sd').innerHTML = `<h4 class="sec">${fmtDay(day)}</h4>` + (evs.length ? evs.map(e => `<button class="ev ${e.game ? 'game' : ''}" data-x="${e.game ? 'games' : 'evEdit'}" data-id="${esc(e.id)}"><span class="ev-t">${evTime(e)}</span><span class="grow">${esc(e.title)}<span class="muted tiny">${e.where ? ' · ' + esc(e.where) : ''}${e.cal ? ' · ' + esc(e.cal) : ''}</span></span></button>`).join('') : '<p class="muted small">Nothing scheduled.</p>')
+      + (tds.length ? tds.map(todoRow).join('') : '');
+    const open = db.list('todos').filter(x => !x.done).sort((a, b) => (a.due || '9').localeCompare(b.due || '9'));
+    const done = db.list('todos').filter(x => x.done && x.doneAt > Date.now() - 7 * 864e5);
+    s.$('#tl').innerHTML = (open.length ? open.map(todoRow).join('') : '<p class="muted small">All caught up.</p>') + (done.length ? `<p class="muted tiny mt">Done this week: ${done.length}</p>` : '');
+  };
+  s.redraw = draw;
+  ui.schedSheet = s;
+  s.onClose = () => { ui.schedSheet = null; };
+  s.on('click', '[data-x="day"]', el => { day = el.dataset.d; draw(); });
+  s.on('click', '[data-x="ev"]', () => openEvent(null, day));
+  s.on('click', '[data-x="evEdit"]', el => openEvent(el.dataset.id, day));
+  s.on('click', '[data-x="td"]', () => openTodo(null, day));
+  s.on('click', '[data-x="links"]', () => openCalLinks());
+  s.on('click', '[data-x="games"]', () => openGames());
+  draw();
+}
+db.onChange(() => ui.schedSheet?.redraw());
+function findEvent(id) {
+  return db.get('events', id) || calLinks().flatMap(l => (calCache(l.id)?.events || []).map(e => ({ ...e, cal: l.name }))).find(e => e.id === id) || null;
+}
+// Her own events edit in place. A linked event can't change at the source, so
+// editing it saves her version here and hides the original.
+function openEvent(id, date = dateStr()) {
+  const e = id ? findEvent(id) : null, linked = e && !db.get('events', e.id);
+  const s = openSheet({
+    title: e ? 'Edit event' : 'New event',
+    body: `${linked ? `<p class="muted small">From ${esc(e.cal || 'a linked calendar')}. Changes here only change Pulse.</p>` : ''}
+      <div class="field"><label>What</label><input id="et" value="${esc(e?.title || '')}" placeholder="Practice, class, travel…" autocomplete="off"></div>
+      <div class="field"><label>Date</label><input type="date" id="ed" value="${e?.date || date}"></div>
+      <div class="grid2"><div class="field"><label>Starts</label><input type="time" id="es" value="${e?.start || ''}"></div>
+      <div class="field"><label>Ends</label><input type="time" id="ee" value="${e?.end || ''}"></div></div>
+      <div class="field"><label>Where</label><input id="ew" value="${esc(e?.where || '')}" placeholder="optional"></div>
+      <div class="chips">${['Practice', 'Lift', 'Class', 'Film', 'Travel', 'Treatment', 'Meeting'].map(x => `<button class="chip sm" data-x="q" data-t="${x}">${x}</button>`).join('')}</div>`,
+    footer: `${e ? `<button class="btn ghost danger-t" data-x="del">Delete</button>` : ''}<button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  s.on('click', '[data-x="q"]', el => { s.$('#et').value = el.dataset.t; });
+  s.on('click', '[data-x="del"]', () => {
+    if (linked) db.put('events', { id: uid(), replaces: e.id, deleted: true, date: e.date });
+    else db.remove('events', e.id);
+    s.close(); toast('Deleted');
+  });
+  s.on('click', '[data-x="save"]', () => {
+    const title = s.$('#et').value.trim();
+    if (!title) return toast('Give it a name');
+    const rec = { id: linked || !e ? uid() : e.id, title, date: s.$('#ed').value || date, start: s.$('#es').value || null, end: s.$('#ee').value || null, where: s.$('#ew').value.trim() };
+    if (linked) rec.replaces = e.id;
+    db.put('events', rec);
+    s.close(); toast('Saved');
+  });
+  if (!e) s.$('#et').focus();
+}
+function openTodo(id, date) {
+  const t = id ? db.get('todos', id) : null;
+  const classes = [...new Set(db.list('todos').map(x => x.cls).filter(Boolean))].slice(0, 6);
+  const s = openSheet({
+    title: t ? 'Edit to-do' : 'New to-do',
+    body: `<div class="field"><label>What's due</label><input id="tt" value="${esc(t?.title || '')}" placeholder="Bio lab report" autocomplete="off"></div>
+      <div class="grid2"><div class="field"><label>Due</label><input type="date" id="tdd" value="${t?.due || date || addDays(dateStr(), 1)}"></div>
+      <div class="field"><label>Time</label><input type="time" id="ttm" value="${t?.time || ''}"></div></div>
+      <div class="field"><label>Class</label><input id="tc" value="${esc(t?.cls || '')}" placeholder="optional" autocomplete="off"></div>
+      ${classes.length ? `<div class="chips">${classes.map(c => `<button class="chip sm" data-x="c" data-c="${esc(c)}">${esc(c)}</button>`).join('')}</div>` : ''}`,
+    footer: `${t ? `<button class="btn ghost danger-t" data-x="del">Delete</button>` : ''}<button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  s.on('click', '[data-x="c"]', el => { s.$('#tc').value = el.dataset.c; });
+  s.on('click', '[data-x="del"]', () => { db.remove('todos', t.id); s.close(); toast('Deleted'); });
+  s.on('click', '[data-x="save"]', () => {
+    const title = s.$('#tt').value.trim();
+    if (!title) return toast("Type what's due");
+    db.put('todos', { ...(t || { id: uid(), done: false }), title, due: s.$('#tdd').value || null, time: s.$('#ttm').value || null, cls: s.$('#tc').value.trim() });
+    s.close(); toast('Saved');
+  });
+  if (!t) s.$('#tt').focus();
+}
+function toggleTodo(id) {
+  const t = db.get('todos', id);
+  if (!t) return;
+  db.put('todos', { ...t, done: !t.done, doneAt: t.done ? null : Date.now() });
+  if (!t.done) buzz();
+}
+function openCalLinks() {
+  const s = openSheet({
+    title: '🔗 Linked calendars', full: true,
+    body: `<p class="small">Paste a calendar link once and Pulse keeps it up to date. Works with:</p>
+      <ul class="hs small"><li><b>Teamworks:</b> Calendar → Sync / Subscribe → copy the link</li>
+        <li><b>Google Calendar</b> (on a computer): Settings → your calendar → <i>Secret address in iCal format</i></li>
+        <li><b>iPhone/iCloud:</b> Calendar app → Calendars → ⓘ next to one → Public Calendar → Share Link</li>
+        <li><b>Canvas/Moodle:</b> Calendar → Calendar feed / Export → copy the link</li></ul>
+      <div id="ll"></div>
+      <div class="field mt"><label>Name</label><input id="ln" placeholder="Teamworks" autocomplete="off"></div>
+      <div class="field"><label>Calendar link</label><input id="lu" placeholder="https://… or webcal://…" autocomplete="off" inputmode="url"></div>
+      <button class="btn primary full" data-x="add">Link calendar</button>
+      <p class="muted tiny mt">Didn't work? You can always add events by hand with ＋ Event.</p>`,
+  });
+  const draw = () => {
+    s.$('#ll').innerHTML = calLinks().map(l => { const c = calCache(l.id); return `<div class="kv-row"><span><b>${esc(l.name)}</b><div class="muted tiny">${c ? `${c.events.length} events · updated ${new Date(c.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : 'Not loaded yet'}</div></span>
+      <span><button class="link" data-x="sync" data-id="${l.id}">Refresh</button> <button class="link danger-t" data-x="rm" data-id="${l.id}">Remove</button></span></div>`; }).join('');
+  };
+  s.on('click', '[data-x="add"]', async () => {
+    const url = s.$('#lu').value.trim(), name = s.$('#ln').value.trim() || 'Calendar';
+    if (!/^(https?|webcals?):\/\//i.test(url)) return toast('Paste the full link');
+    const link = { id: uid(), name, url };
+    const b = s.$('[data-x="add"]'); b.disabled = true; b.textContent = 'Checking…';
+    try { const c = await syncCal(link, true); saveProfile({ calLinks: [...calLinks(), link] }); s.$('#lu').value = ''; s.$('#ln').value = ''; toast(`Linked · ${c.events.length} events`); queueRender(); }
+    catch (e) { toast(e.message); }
+    b.disabled = false; b.textContent = 'Link calendar'; draw();
+  });
+  s.on('click', '[data-x="sync"]', async el => { const l = calLinks().find(x => x.id === el.dataset.id); try { await syncCal(l, true); toast('Updated'); } catch (e) { toast(e.message); } draw(); queueRender(); });
+  s.on('click', '[data-x="rm"]', el => { saveProfile({ calLinks: calLinks().filter(x => x.id !== el.dataset.id) }); try { localStorage.removeItem('pulseCal-' + el.dataset.id); } catch {} draw(); queueRender(); });
+  draw();
+}
+
+// ---------- Brick (phone blocked) ----------
+const brickNow = () => db.list('brick').find(b => !b.end);
+const dur = m => m < 60 ? `${Math.round(m)}m` : fmtSleep(m);
+const brickMin = (b, from = 0, to = Infinity) => Math.max(0, Math.min(b.end || Date.now(), to) - Math.max(b.start, from)) / 60e3;
+const dayBounds = d => [new Date(d + 'T00:00').getTime(), new Date(addDays(d, 1) + 'T00:00').getTime()];
+const brickOn = d => { const [a, z] = dayBounds(d); return db.list('brick').reduce((s, b) => s + brickMin(b, a, z), 0); };
+function brickRow(d) {
+  if (d !== dateStr()) return '';
+  const on = brickNow(), today = brickOn(d);
+  return `<section class="card brick-card"><div class="brick-row">
+    <span class="brick-ico">🧱</span>
+    <div class="grow">${on ? `<b>Bricked now</b><div class="muted small">${dur(brickMin(on))} so far${today > brickMin(on) + 1 ? ` · ${dur(today)} today` : ''}</div>`
+      : `<b>Phone brick</b><div class="muted small">${today >= 1 ? `${dur(today)} today` : 'Not today yet'}</div>`}</div>
+    ${on ? `<button class="btn primary" data-act="brickStop">Unbrick</button>` : `<button class="btn soft" data-act="brickLog">Log time</button><button class="btn primary" data-act="brickStart">Start</button>`}
+  </div></section>`;
+}
+function openBrickLog() {
+  const s = openSheet({
+    title: '🧱 Log Brick time',
+    body: `<div class="chips">${[30, 60, 90, 120, 180, 240].map(m => `<button class="chip" data-x="m" data-m="${m}">${dur(m)}</button>`).join('')}</div>
+      <div class="grid2 mt"><div class="field"><label>Hours</label><input id="bh" inputmode="decimal" placeholder="0"></div><div class="field"><label>Ended at</label><input type="time" id="be" value="${timeStr()}"></div></div>
+      <button class="link muted small" data-x="setup">Log it on its own with a Shortcut</button>`,
+    footer: `<button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  s.on('click', '[data-x="m"]', el => { s.$('#bh').value = fmtIn(+el.dataset.m / 60); });
+  s.on('click', '[data-x="setup"]', () => { s.close(); openBrickSetup(); });
+  s.on('click', '[data-x="save"]', () => {
+    const mins = num(s.$('#bh').value) * 60;
+    if (!(mins > 0)) return toast('Pick how long');
+    const end = new Date(dateStr() + 'T' + (s.$('#be').value || timeStr())).getTime();
+    db.put('brick', { id: uid(), start: end - mins * 60e3, end });
+    s.close(); toast(`🧱 ${dur(mins)} logged`);
+  });
+}
+// Optional: an iPhone Shortcut posts start/stop to the push server, and the
+// app collects them when it opens.
+function openBrickSetup() {
+  if (!profile()?.brickKey) saveProfile({ brickKey: Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(36).padStart(2, '0')).join('').slice(0, 24) });
+  const key = profile().brickKey, base = CONFIG_PUSH() + '/brick?key=' + key + '&action=';
+  const s = openSheet({
+    title: '🧱 Brick on its own', full: true,
+    body: `<p class="small">Brick doesn't share its data, but an iPhone Shortcut can tell Pulse when you brick and unbrick. Optional, and you can still log by hand.</p>
+      <ol class="hs small"><li>Open <b>Shortcuts</b> → <b>＋</b> → add <b>Get Contents of URL</b>.</li>
+        <li>Paste the <b>Start</b> link below, tap ▸ next to it, and set Method to <b>POST</b>. Name it "Brick start".</li>
+        <li>Make a second one with the <b>Stop</b> link, named "Brick stop".</li>
+        <li>Run them from Automation (for example when a Focus turns on and off, or when you open Brick), or from your Home Screen.</li></ol>
+      <div class="field"><label>Start link</label><div class="copy-row"><input readonly value="${esc(base)}start"><button class="btn soft" data-x="copy" data-v="${esc(base)}start">Copy</button></div></div>
+      <div class="field"><label>Stop link</label><div class="copy-row"><input readonly value="${esc(base)}stop"><button class="btn soft" data-x="copy" data-v="${esc(base)}stop">Copy</button></div></div>
+      <p class="muted tiny">These links only work for your phone. Pulse picks up the times next time you open it.</p>`,
+  });
+  s.on('click', '[data-x="copy"]', async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast('Copied'); } catch { toast('Press and hold the link to copy'); } });
+}
+async function pullBrick() {
+  const key = profile()?.brickKey;
+  if (!key || DEMO) return;
+  try {
+    const list = await (await fetch(CONFIG_PUSH() + '/brick?key=' + key)).json();
+    if (!Array.isArray(list)) return;
+    const seen = new Set(db.list('brick').map(b => b.extStart).filter(Boolean));
+    let open = brickNow();
+    for (const e of list.sort((a, b) => a.at - b.at)) {
+      if (e.action === 'start' && !seen.has(e.at) && !open) { open = { id: uid(), start: e.at, end: null, extStart: e.at }; db.put('brick', open); seen.add(e.at); }
+      else if (e.action === 'stop' && open && e.at > open.start) { db.put('brick', { ...open, end: e.at }); open = null; }
+    }
+  } catch {}
+}
+function brickTrends(dates) {
+  const mins = dates.map(brickOn), on = mins.filter(m => m >= 1);
+  if (!on.length && !db.list('brick').length) return '';
+  // Next-night sleep after days she bricked 2h+ vs days she didn't.
+  const sl = dates.map(d => ({ m: brickOn(d), s: db.get('days', addDays(d, 1))?.sleepMin })).filter(x => x.s != null);
+  const avgOf = l => l.length ? l.reduce((a, x) => a + x.s, 0) / l.length : null;
+  const yes = avgOf(sl.filter(x => x.m >= 120)), no = avgOf(sl.filter(x => x.m < 120));
+  return `<section class="card"><div class="card-head"><h3>🧱 Phone brick</h3><span class="muted small">${dur(mins.reduce((a, b) => a + b, 0))} total</span></div>
+    ${barChart({ values: mins.map(m => Math.round(m / 6) / 10), labels: dates.map(d => { const x = parseDate(d); return `${x.getMonth() + 1}/${x.getDate()}`; }), dates, color: 'var(--c)', fmtY: x => x + 'h' })}
+    <div class="big-stats"><div><b>${on.length}</b><span>days bricked</span></div><div><b>${on.length ? dur(on.reduce((a, b) => a + b, 0) / on.length) : '–'}</b><span>avg on those days</span></div><div><b>${dur(Math.max(0, ...db.list('brick').map(b => brickMin(b))))}</b><span>longest</span></div></div>
+    ${yes != null && no != null && sl.filter(x => x.m >= 120).length >= 3 && sl.filter(x => x.m < 120).length >= 3 ? `<p class="small">After days with 2h+ bricked you slept <b>${dur(yes)}</b>, vs <b>${dur(no)}</b> other nights.</p>` : ''}
+  </section>`;
+}
+
+// ---------- injuries & symptoms ----------
+const SPOTS = ['Knee', 'Ankle', 'Foot', 'Shin', 'Hamstring', 'Quad', 'Calf', 'Hip', 'Back', 'Shoulder', 'Wrist / hand', 'Neck', 'Head'];
+const HURT = ['Pain', 'Soreness', 'Swelling', 'Stiffness', 'Cramp', 'Headache', 'Other'];
+const painOf = d => db.list('injuries').filter(x => x.date === d);
+const spotName = x => (x.side ? x.side + ' ' : '') + x.spot.toLowerCase();
+function injuryRow(d) {
+  const recent = db.list('injuries').filter(x => x.date >= addDays(d, -6) && x.date <= d);
+  const bySpot = {};
+  recent.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).forEach(x => { bySpot[spotName(x)] = x; });
+  const list = Object.values(bySpot).slice(-3);
+  return `<section class="card inj-card"><div class="card-head"><h3>🩹 Body</h3><button class="link" data-act="injuryLog">＋ Log</button></div>
+    ${list.length ? list.map(x => `<button class="inj" data-act="injuryLog" data-id="${x.id}"><span class="grow">${esc(spotName(x))[0].toUpperCase() + esc(spotName(x)).slice(1)} · ${esc(x.kind.toLowerCase())}<div class="muted tiny">${x.date === d ? 'today' : fmtDay(x.date)}${x.notes ? ' · ' + esc(x.notes) : ''}</div></span><span class="pain p${Math.min(3, Math.ceil(x.pain / 3.4))}">${x.pain}</span></button>`).join('')
+      : `<p class="muted small">Sore, hurt or off? Log where and how bad, and Pulse looks for what sets it off.</p>`}
+  </section>`;
+}
+function openInjury(id) {
+  const x = id ? db.get('injuries', id) : null;
+  let spot = x?.spot || '', side = x?.side || '', kind = x?.kind || 'Pain', pain = x?.pain || 5;
+  const s = openSheet({
+    title: x ? 'Edit' : '🩹 What hurts?',
+    body: `<div class="field"><label>Where</label><div class="chips" id="sp">${SPOTS.map(p => `<button class="chip sm ${p === spot ? 'on' : ''}" data-x="spot" data-v="${p}">${p}</button>`).join('')}</div>
+        <input id="so" class="mt" placeholder="Somewhere else…" value="${SPOTS.includes(spot) ? '' : esc(spot)}" autocomplete="off"></div>
+      <div class="field"><label>Side</label><div class="seg">${['Left', 'Right', 'Both', ''].map(v => `<button data-x="side" data-v="${v}" class="${v === side ? 'on' : ''}">${v || 'n/a'}</button>`).join('')}</div></div>
+      <div class="field"><label>What kind</label><div class="chips">${HURT.map(h => `<button class="chip sm ${h === kind ? 'on' : ''}" data-x="kind" data-v="${h}">${h}</button>`).join('')}</div></div>
+      <div class="field"><label>How bad: <b id="pv">${pain}</b>/10</label><input type="range" min="1" max="10" id="pr" value="${pain}" class="pain-range"></div>
+      <div class="field"><label>Notes</label><input id="pn" value="${esc(x?.notes || '')}" placeholder="Sharp after practice, swollen in the morning…"></div>
+      <div class="field"><label>When</label><div class="grid2"><input type="date" id="pd" value="${x?.date || ui.date}"><input type="time" id="pt" value="${x?.time || timeStr()}"></div></div>`,
+    footer: `${x ? `<button class="btn ghost danger-t" data-x="del">Delete</button>` : ''}<button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  const pick = (sel, v) => s.$$(`[data-x="${sel}"]`).forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  s.on('click', '[data-x="spot"]', el => { spot = el.dataset.v; s.$('#so').value = ''; pick('spot', spot); if (spot === 'Head' && kind === 'Pain') { kind = 'Headache'; pick('kind', kind); } });
+  s.on('input', '#so', el => { spot = el.value.trim(); pick('spot', ''); });
+  s.on('click', '[data-x="side"]', el => { side = el.dataset.v; pick('side', side); });
+  s.on('click', '[data-x="kind"]', el => { kind = el.dataset.v; pick('kind', kind); });
+  s.on('input', '#pr', el => { pain = +el.value; s.$('#pv').textContent = pain; });
+  s.on('click', '[data-x="del"]', () => { db.remove('injuries', x.id); s.close(); });
+  s.on('click', '[data-x="save"]', () => {
+    if (!spot) return toast('Pick where');
+    db.put('injuries', { ...(x || { id: uid() }), spot: spot[0].toUpperCase() + spot.slice(1), side, kind, pain, notes: s.$('#pn').value.trim(), date: s.$('#pd').value || ui.date, time: s.$('#pt').value || timeStr() });
+    s.close(); toast('Logged');
+  });
+}
+// For each spot: what was going on around flare-ups (pain 5+) compared with
+// the other days she logged that spot. Only shown when it's clearly different.
+function injuryPatterns() {
+  const all = db.list('injuries'), g = goals(), out = [];
+  const spots = {};
+  all.forEach(x => { (spots[spotName(x)] = spots[spotName(x)] || []).push(x); });
+  for (const [name, logs] of Object.entries(spots)) {
+    if (logs.length < 4) continue;
+    const day = d => db.get('days', d) || {};
+    const trained = d => actsOf(day(d)).some(a => a !== 'rest');
+    const checks = {
+      'after 2+ training days in a row': x => trained(x.date) && trained(addDays(x.date, -1)),
+      'the day after weights': x => actsOf(day(addDays(x.date, -1))).includes('weights'),
+      'on or right after a game': x => !!(gameOn(x.date) || gameOn(addDays(x.date, -1))),
+      'after a short night': x => day(x.date).sleepMin != null && day(x.date).sleepMin < sleepGoal() - 30,
+      'when recovery was low': x => day(x.date).recovery != null && day(x.date).recovery < 50,
+      'on period days': x => !!day(x.date).period,
+      'on low-fuel days': x => { const t = sumMacros(dayEntries(addDays(x.date, -1)).map(e => e.macros)); return t.cal > 0 && t.cal < g.cal * 0.75; },
+    };
+    const flare = logs.filter(x => x.pain >= 5), calm = logs.filter(x => x.pain < 5);
+    if (flare.length < 2 || calm.length < 2) continue;
+    const found = [];
+    for (const [label, fn] of Object.entries(checks)) {
+      const a = flare.filter(fn).length / flare.length, b = calm.filter(fn).length / calm.length;
+      if (a - b >= 0.3 && flare.filter(fn).length >= 2) found.push({ label, a: Math.round(a * 100), b: Math.round(b * 100) });
+    }
+    const last = logs.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(-6).map(x => x.pain);
+    out.push({ name, n: logs.length, avg: logs.reduce((s, x) => s + x.pain, 0) / logs.length, last, found: found.sort((x, y) => (y.a - y.b) - (x.a - x.b)).slice(0, 3) });
+  }
+  return out;
+}
+function injuryTrends() {
+  const p = injuryPatterns();
+  if (!db.list('injuries').length) return '';
+  return `<section class="card gut-trends"><div class="card-head"><h3>🩹 What flares it up</h3></div>
+    ${p.length ? p.map(x => `<div class="inj-sum"><b>${esc(x.name[0].toUpperCase() + x.name.slice(1))}</b> <span class="muted small">${x.n} logs · avg ${fmt(x.avg)}/10 · recent ${x.last.join(' → ')}</span>
+      ${x.found.length ? x.found.map(f => `<div class="fact"><span>⚠️</span><div>Worse <b>${f.label}</b> (${f.a}% of bad days vs ${f.b}% of better ones)</div></div>`).join('') : '<p class="muted small">No clear pattern yet.</p>'}</div>`).join('')
+      : `<p class="muted small">Log the same spot a few times (good and bad days) and patterns show up here.</p>`}
+  </section>`;
+}
+
+// ---------- journal photos ----------
+async function addJournalPhoto(date, file) {
+  const img = await fileToDataURL(file, 1000, 0.7);
+  const d = { ...(db.get('days', date) || { id: date, date }) };
+  const ph = { id: uid(), img, desc: '' };
+  d.photos = [...(d.photos || []), ph];
+  db.put('days', d);
+  // A short description so Ask Pulse knows what's in it.
+  try {
+    const r = await fetch(CONFIG_PUSH() + '/describe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: img }) });
+    const j = await r.json();
+    if (j.text) { const cur = { ...(db.get('days', date) || d) }; cur.photos = (cur.photos || []).map(p => p.id === ph.id ? { ...p, desc: j.text } : p); db.put('days', cur); }
+  } catch {}
+}
+
+// ---------- developer mode: what's new, one tap each ----------
+const WHATS_NEW = [
+  ['nNotify', 'Notifications pop-up', 'Every 3rd open while they are off'],
+  ['nHealth', 'Apple Health suggestion', 'Every 2 weeks if not set up, one at a time'],
+  ['nCal', 'Calendar suggestion', 'Every 2 weeks if no calendar is linked'],
+  ['allOn', 'All reminders on/off', 'One tick for every reminder'],
+  ['water', 'Water: any amount', 'Type oz or ml, add, take away or set the total'],
+  ['caf', 'Caffeine', 'mg box on foods and quick add, daily total, late heads-up'],
+  ['sched', 'Schedule', 'Week view with practices, class, games and to-dos'],
+  ['links', 'Linked calendars', 'Paste a Teamworks, Google, iCloud or Canvas link'],
+  ['todo', 'To-dos', 'Due date, time and class; "Due soon" on Today'],
+  ['journal', 'Journal photos', 'Add photos; Ask Pulse can read them'],
+  ['brick', 'Phone brick', 'Start/Unbrick, log time, stats in Trends'],
+  ['brickAuto', 'Brick on its own', 'Optional Shortcut that logs for her'],
+  ['injury', 'Injuries & symptoms', 'Where, what kind, pain 1-10'],
+  ['injTrend', 'What flares it up', 'Patterns in Trends'],
+  ['games', 'Games: postponed & editable', 'Updates from the Pilots feed; tap to edit'],
+];
+function devShow(k) {
+  const scrollTo2 = (tab, sel) => { go(tab); setTimeout(() => { const el = document.querySelector(sel); if (el) { window.scrollTo({ top: el.getBoundingClientRect().top + scrollY - 90, behavior: 'smooth' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1600); } }, 250); };
+  ({
+    nNotify: () => showNudge('notify'), nHealth: () => showNudge('health'), nCal: () => showNudge('cal'),
+    allOn: () => scrollTo2('me', '.all-row'),
+    water: () => { ui.date = dateStr(); go('today'); setTimeout(openWater, 200); },
+    caf: () => openFoodForm({ prefill: { name: 'Celsius', servingG: 355, cal: 10, caf: 200, servingLabel: '1 can' } }),
+    sched: () => openSchedule(), links: () => openCalLinks(), todo: () => openTodo(null, addDays(dateStr(), 1)),
+    journal: () => openJournal(dateStr()),
+    brick: () => { ui.date = dateStr(); scrollTo2('today', '.brick-card'); },
+    brickAuto: () => openBrickSetup(),
+    injury: () => openInjury(null),
+    injTrend: () => scrollTo2('trends', '.inj-sum'),
+    games: () => openGames(),
+  })[k]?.();
+}
+
+// ---------- set-up nudges ----------
+const NUDGES = {
+  notify: { e: '🔔', t: 'Turn on notifications', b: "Pulse works best with them on: bedtime, meds, game days and wins. Never more than a few a day, and nothing after bedtime.", go: 'Turn on', act: () => turnOnNotify() },
+  health: { e: '⌚', t: 'Try connecting Apple Health', b: 'Sleep, recovery and calories burned fill in from your Whoop on their own. Takes about 2 minutes to set up.', go: 'Set it up', act: () => healthSync() },
+  cal: { e: '📅', t: 'Try linking your schedule', b: 'Paste your Teamworks or Google calendar link once and practices, lifts and travel show up here. Takes a minute.', go: 'Link it', act: () => openCalLinks() },
+  brick: { e: '🧱', t: 'Log Brick time on its own', b: 'An iPhone Shortcut can log every time you brick and unbrick, so you never have to tap. Optional.', go: 'Show me', act: () => openBrickSetup() },
+};
+const nudgeState = () => { try { return JSON.parse(localStorage.getItem('pulseNudge-' + (DEMO ? DEMO_KEY : 'me')) || '{}'); } catch { return {}; } };
+const saveNudge = st => { try { localStorage.setItem('pulseNudge-' + (DEMO ? DEMO_KEY : 'me'), JSON.stringify(st)); } catch {} };
+function nudgeNeeded(k) {
+  if (k === 'notify') return !ui.notifyOn && notify.supported();
+  if (k === 'health') return !profile()?.healthReady;
+  if (k === 'cal') return !(profile()?.calLinks || []).length;
+  if (k === 'brick') return !profile()?.brickKey && db.list('brick').length >= 2;
+  return false;
+}
+function maybeNudge() {
+  if (sheets.length || document.querySelector('.tour, .wrapped, .winscreen, .splash')) return;
+  const st = nudgeState();
+  st.opens = (st.opens || 0) + 1;
+  let pick = null;
+  if (nudgeNeeded('notify') && st.opens % 3 === 0) pick = 'notify';
+  else if (Date.now() - (st.lastSetup || 0) > 14 * 864e5) {
+    pick = ['health', 'cal', 'brick'].filter(k => nudgeNeeded(k) && !st['never_' + k]).sort((a, b) => (st['at_' + a] || 0) - (st['at_' + b] || 0))[0] || null;
+    if (pick) st.lastSetup = Date.now();
+  }
+  if (pick) st['at_' + pick] = Date.now();
+  saveNudge(st);
+  if (pick) showNudge(pick);
+}
+function showNudge(k) {
+  const n = NUDGES[k];
+  const s = openSheet({
+    title: '',
+    body: `<div class="nudge"><div class="nudge-e">${n.e}</div><h3>${n.t}</h3><p class="muted">${n.b}</p></div>`,
+    footer: `<div class="nudge-btns"><button class="btn primary full" data-x="go">${n.go}</button>
+      <button class="btn ghost full" data-x="later">Not now</button>${k === 'notify' ? '' : `<button class="link muted small" data-x="never">Don't show again</button>`}</div>`,
+  });
+  s.on('click', '[data-x="go"]', () => { s.close(); n.act(); });
+  s.on('click', '[data-x="later"]', () => s.close());
+  s.on('click', '[data-x="never"]', () => { const st = nudgeState(); st['never_' + k] = true; saveNudge(st); s.close(); });
 }
 
 // A short personal hello each time the app opens.
@@ -3454,6 +4105,7 @@ db.onChange(kind => {
 });
 sync.onStatus(() => { if (ui.tab === 'me') queueRender(); });
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && appEl.classList.contains('ready')) { syncCals(); pullBrick(); }
   if (document.visibilityState !== 'visible') return;
   const t = dateStr();
   if (t !== lastToday) { if (ui.date === lastToday) ui.date = t; lastToday = t; queueRender(); }
