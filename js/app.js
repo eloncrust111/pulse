@@ -55,7 +55,7 @@ const OFF_LEVELS = [
 const DEFAULT_GOALS = { cal: 2400, p: 140, c: 300, f: 75, fiber: 30, water: 100 };
 // This copy of Pulse is set up for Carly. Set to null to go back to asking each person.
 const OWNER = { name: 'Carly', number: '11', glutenFree: true };
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
 // Developer mode: the test build lives in /dev/ with its own sample data.
 // The live app sends a phone there once the hidden switch in Me is turned on.
 const DEV = location.pathname.includes('/dev/');
@@ -157,6 +157,16 @@ function confirmSheet(msg, yes = 'Delete', danger = true) {
   });
 }
 
+// The Brick device: a light gray rounded square with corner marks and BRICK on it.
+const BRICK = `<svg class="brick-logo" viewBox="0 0 40 40" aria-hidden="true"><rect x="2.5" y="2.5" width="35" height="35" rx="9" fill="#dcdde0" stroke="#bfc1c5"/><path d="M9.5 14.5v-3a2 2 0 0 1 2-2h3M25.5 9.5h3a2 2 0 0 1 2 2v3M30.5 25.5v3a2 2 0 0 1-2 2h-3M14.5 30.5h-3a2 2 0 0 1-2-2v-3" stroke="#909297" stroke-width="2" fill="none" stroke-linecap="round"/><text x="20" y="23" text-anchor="middle" font-size="7.2" font-weight="600" font-family="ui-monospace,Menlo,monospace" fill="#5a5c61" letter-spacing=".4">BRICK</text></svg>`;
+// A matching emoji for foods without a photo.
+const FOOD_EMOJI = [[/shake|smoothie/, '🥤'], [/celsius|energy|red bull|monster|soda|coke|sprite|sparkling/, '🥫'], [/juice/, '🧃'], [/bean|lentil|chickpea|hummus/, '🫘'], [/egg/, '🥚'], [/banana/, '🍌'], [/apple/, '🍎'], [/strawberr|berr/, '🍓'], [/grape/, '🍇'], [/orange|clementine|mandarin/, '🍊'], [/pineapple/, '🍍'], [/mango/, '🥭'], [/peach/, '🍑'], [/watermelon|melon/, '🍉'], [/cherr/, '🍒'], [/lemon|lime/, '🍋'], [/avocado|guac/, '🥑'],
+  [/broccoli/, '🥦'], [/carrot/, '🥕'], [/corn/, '🌽'], [/salad|lettuce|spinach|greens|kale/, '🥗'], [/sweet potato|potato|fries/, '🥔'], [/tomato/, '🍅'], [/cucumber|pickle/, '🥒'], [/pepper/, '🫑'], [/mushroom/, '🍄'],
+  [/sandwich|sub\b|wrap|panini/, '🥪'], [/burger/, '🍔'], [/pizza/, '🍕'], [/taco|burrito|quesadilla/, '🌮'], [/sushi/, '🍣'], [/pasta|spaghetti|noodle|mac/, '🍝'], [/rice|bowl/, '🍚'], [/ramen|soup|chili|stew/, '🍜'],
+  [/salmon|tuna|fish|shrimp/, '🐟'], [/chicken|turkey/, '🍗'], [/steak|beef|bacon|pork|ham/, '🥩'], [/bread|toast|bagel|bun/, '🍞'], [/oat|cereal|granola|chex|muesli/, '🥣'], [/pancake|waffle/, '🥞'], [/cracker|pretzel/, '🍘'],
+  [/chip|crisp/, '🥨'], [/popcorn/, '🍿'], [/cookie/, '🍪'], [/chocolate|m&m|candy|reese/, '🍫'], [/ice cream|froyo/, '🍦'], [/cake|muffin|brownie/, '🧁'], [/donut|doughnut/, '🍩'], [/peanut butter|almond butter|\bnut|almond|cashew/, '🥜'],
+  [/cheese/, '🧀'], [/yogurt|yoghurt/, '🥛'], [/milk/, '🥛'], [/butter/, '🧈'], [/honey/, '🍯'], [/shake|smoothie/, '🥤'], [/protein bar|bar\b/, '🍫'], [/celsius|energy|red bull|monster|soda|coke|sprite/, '🥫'], [/juice/, '🧃'], [/tea\b|matcha/, '🍵'], [/water|gatorade|electrolyte|liquid iv/, '💧']];
+const foodEmoji = (name, fallback) => FOOD_EMOJI.find(([re]) => re.test(String(name || '').toLowerCase()))?.[1] || fallback;
 const thumb = (photo, fallback) => photo ? `<img class="thumb" src="${photo}" alt="">` : `<span class="thumb ph">${fallback}</span>`;
 const IC = {
   camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
@@ -178,7 +188,7 @@ function macroBar(label, k, v, goal) {
   const pct = Math.min(100, (v / (goal || 1)) * 100), left = goal - v;
   return `<div class="mb"><div class="mb-top"><span>${label}</span><span><b>${fmt(v)}</b> / ${fmt(goal)}g</span></div>
     <div class="mb-track"><i class="bg-${k}" style="width:${pct}%"></i></div>
-    <div class="mb-left">${left > 0.5 ? fmt(left) + 'g to go' : 'Goal hit ✓'}</div></div>`;
+    <div class="mb-left ${left > 0.5 ? '' : 'hit'}">${left > 0.5 ? fmt(left) + 'g to go' : 'Goal hit ✓'}</div></div>`;
 }
 
 // ---------- data helpers ----------
@@ -303,22 +313,35 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 function fmtIn(v) { return v == null || v === '' ? '' : String(Math.round(v * 10) / 10); }
 
 // ---------- rendering ----------
-const screens = { today: screenToday, foods: screenFoods, recipes: screenRecipes, trends: screenTrends, me: screenMe };
+const screens = { today: screenToday, food: screenFood, plan: screenPlan, body: screenBody, trends: screenTrends, me: screenMe };
 let renderQueued = false;
 function render() {
   renderQueued = false;
   if (!appEl.classList.contains('ready')) return;
   main.innerHTML = screens[ui.tab]();
   $$('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
-  $('#fab').hidden = ui.tab !== 'today';
+  $('#fab').hidden = !(ui.tab === 'today' || (ui.tab === 'food' && (ui.foodView || 'log') === 'log'));
   checkRings();
 }
 const queueRender = () => { if (!renderQueued) { renderQueued = true; queueMicrotask(render); } };
 function go(tab) { ui.tab = tab; render(); window.scrollTo(0, 0); }
 
 function header(title, sub = '', extra = '') {
-  return `<header class="top"><div class="top-row"><div><h1>${title}</h1>${sub ? `<div class="top-sub">${sub}</div>` : ''}</div>${extra}</div></header>`;
+  return `<header class="top"><div class="top-row"><div><h1>${title}</h1>${sub ? `<div class="top-sub">${sub}</div>` : ''}</div><div class="top-r">${extra}${title === 'Settings' ? '' : meBtn()}</div></div></header>`;
 }
+// Her initial in the corner opens Me (settings, goals, reminders).
+const meBtn = () => `<button class="me-btn" data-act="tab" data-tab="me" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/><circle cx="12" cy="12" r="6.6"/></svg></button>`;
+function dateNav(d) {
+  return `<div class="datenav">
+      <button class="dn-btn" data-act="day" data-n="-1" aria-label="Previous day">‹</button>
+      <button class="datebtn" data-act="calendar" aria-label="Open calendar">${fmtDay(d)}<span class="date-sub">${icon('calendar')}${d === dateStr() ? parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Calendar'}</span></button>
+      <button class="dn-btn" data-act="day" data-n="1" aria-label="Next day">›</button>
+    </div>
+    ${d !== dateStr() ? `<button class="pill-btn" data-act="today">Back to today</button>` : ''}`;
+}
+// Food and Body follow the same day as Today, with the same day switcher.
+const dayTop = (title, d, extra = '') => `<header class="top today-top day-top">${meBtn()}<button class="ask-pill" data-act="ask" aria-label="Ask Pulse">✨ Ask</button>
+    <div class="hello">${title}</div>${dateNav(d)}${extra}</header>`;
 
 // ===== TODAY =====
 function greeting() {
@@ -332,18 +355,14 @@ function screenToday() {
   const left = g.cal - t.cal;
   return `
   <header class="top today-top">
+    ${meBtn()}
     <button class="ask-pill" data-act="ask" aria-label="Ask Pulse">✨ Ask</button>
     <div class="hello">${greeting()}, ${esc(firstName())}</div>
-    <div class="datenav">
-      <button class="dn-btn" data-act="day" data-n="-1" aria-label="Previous day">‹</button>
-      <button class="datebtn" data-act="calendar" aria-label="Open calendar">${fmtDay(d)}<span class="date-sub">${icon('calendar')}${d === dateStr() ? parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Calendar'}</span></button>
-      <button class="dn-btn" data-act="day" data-n="1" aria-label="Next day">›</button>
-    </div>
-    ${d !== dateStr() ? `<button class="pill-btn" data-act="today">Back to today</button>` : ''}
+    ${dateNav(d)}
   </header>
   <section class="card hero">
     <div class="hero-row">
-      <div class="hero-ring">${ring(t.cal, g.cal)}<div class="ring-center"><div class="big">${fmt(t.cal)}</div><div class="small">of ${fmt(g.cal)} cal</div></div></div>
+      <div class="hero-ring ${t.cal >= g.cal * 0.9 ? 'hit' : ''}">${ring(t.cal, g.cal)}<div class="ring-center"><div class="big">${fmt(t.cal)}</div><div class="small">of ${fmt(g.cal)} cal</div></div>${t.cal >= g.cal * 0.9 ? '<span class="hero-check">✓</span>' : ''}</div>
       <div class="hero-side">
         <div class="kv"><span>Goal</span><b>${fmt(g.cal)}</b></div>
         <div class="kv"><span>${left > 0 ? 'To go' : 'Goal'}</span><b>${left > 0 ? fmt(left) : 'Hit ✓'}</b></div>
@@ -356,23 +375,187 @@ function screenToday() {
   ${goalRings(d, day, t, g)}
   ${fuelCard(d, day, t, g, ents)}
   ${winCard(d)}
-  ${readinessCard(d)}
-  ${weekCard(d)}
   ${gameBanner(d)}
-  ${activityRow(d, day)}
+  ${nextUpCard(d)}
+  ${quickRow(d)}
+  ${weekCard(d)}
+  <div class="spacer"></div>`;
+}
+function quickRow(d) {
+  const b = d === dateStr() ? brickNow() : null;
+  const q = (k, ico, label, cls = '') => `<button data-act="qgo" data-k="${k}" class="${cls}"><span>${ico}</span>${label}</button>`;
+  return `<section class="quick">
+    ${q('food', '🍽️', 'Food')}${q('water', '💧', 'Water')}${q('caf', '⚡', 'Caffeine')}${q('sleep', '😴', 'Sleep')}
+    ${q('meds', '💊', 'Meds')}${q('train', '🏀', 'Training')}${q('brick', BRICK, b ? 'Unbrick' : 'Brick', b ? 'on' : '')}${q('hurt', '🩹', 'Hurt')}
+    ${q('gut', '🤢', 'Stomach')}${q('feel', '😵‍💫', 'Feeling off')}${q('journal', '📓', 'Journal')}${q('todo', '✅', 'To-do')}
+  </section>
+  ${b ? `<div class="brick-live">${BRICK} Bricked · ${dur(brickMin(b))} so far</div>` : ''}`;
+}
+// Each quick button goes to the tab where that log lives, shows the spot, then opens it.
+function quickGo(k) {
+  const t = dateStr();
+  const to = (tab, sel, then) => {
+    if (tab === 'food') ui.foodView = 'log';
+    if (tab === 'plan') ui.planWeek = 0;
+    ui.date = t; go(tab);
+    setTimeout(() => {
+      const el = document.querySelector(sel);
+      if (el) { window.scrollTo({ top: el.getBoundingClientRect().top + scrollY - 90, behavior: 'smooth' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+      if (then) setTimeout(then, 450);
+    }, 30);
+  };
+  ({
+    food: () => to('food', '.card.meal', () => acts.add({})),
+    water: () => to('food', '.card.water', openWater),
+    caf: () => to('food', '.caf-card', () => openCaf()),
+    sleep: () => to('body', '.sleep-card', () => openBody(t)),
+    meds: () => to('body', '.card.meds'),
+    train: () => to('body', '.train-card'),
+    brick: () => to('body', '.brick-card', () => (brickNow() ? acts.brickStop : acts.brickStart)()),
+    hurt: () => to('body', '.inj-card', () => openInjury(null)),
+    gut: () => to('body', '.card.gut', () => openGut({ date: t })),
+    feel: () => to('body', '.card.feel', () => openFeel({ date: t })),
+    journal: () => to('body', '.journal-card', () => openJournal(t)),
+    todo: () => to('plan', '.pday.today', () => openTodo(null, t)),
+  })[k]?.();
+}
+// Today's short look at what's next; the full week lives in Plan.
+function nextUpCard(d) {
+  if (d !== dateStr()) return '';
+  const now = timeStr(), evs = eventsOn(d).filter(e => !e.game && (!e.start || (e.end || e.start) >= now)).slice(0, 3), soon = todosSoon().slice(0, 3);
+  if (!evs.length && !soon.length) return `<button class="card nextup-empty" data-act="tab" data-tab="plan"><span>📅</span><span class="grow">Nothing else on today</span><span class="link">Planner ›</span></button>`;
+  return `<section class="card nextup"><div class="card-head"><h3>📅 Up next</h3><button class="link" data-act="tab" data-tab="plan">Planner ›</button></div>
+    ${evs.map(e => `<button class="ev" data-act="eventEdit" data-id="${esc(e.id)}"><span class="ev-t">${evTime(e)}</span><span class="grow">${esc(e.title)}${e.where ? `<span class="muted tiny"> · ${esc(e.where)}</span>` : ''}</span></button>`).join('')}
+    ${soon.length ? `<div class="due-head">Due soon</div>${soon.map(todoRow).join('')}` : ''}
+  </section>`;
+}
+
+// ===== FOOD =====
+function screenFood() {
+  const d = ui.date, g = goals(), ents = dayEntries(d), day = db.get('days', d) || {}, v = ui.foodView || 'log';
+  const seg = `<div class="seg food-seg">${[['log', 'Log'], ['foods', 'My foods'], ['recipes', 'Recipes']].map(([k, l]) => `<button class="${v === k ? 'on' : ''}" data-act="foodView" data-v="${k}">${l}</button>`).join('')}</div>`;
+  const bare = html => html.replace(/^\s*<header[\s\S]*?<\/header>/, '');
+  if (v === 'foods') return `${header('Food', `${db.list('foods').length} saved`)}<div class="pad">${seg}</div>${bare(screenFoods())}`;
+  if (v === 'recipes') return `${header('Food', 'Recipes & meal prep')}<div class="pad">${seg}</div>${bare(screenRecipes())}`;
+  return `${dayTop('Food', d, seg)}
   ${gfPrompt()}
   ${prepCard()}
   ${MEALS.map(m => mealCard(m, ents.filter(e => e.meal === m.id), d)).join('')}
   ${waterCard(day, g)}
+  ${cafCard(d)}
+  <div class="spacer"></div>`;
+}
+
+// ===== BODY =====
+function screenBody() {
+  const d = ui.date, day = db.get('days', d) || {};
+  return `${dayTop('Body', d)}
+  ${readinessCard(d)}
   ${sleepCard(d, day)}
+  ${activityRow(d, day)}
   ${bodyCard(day)}
-  ${profile()?.showWeight ? weightCard(Array.from({ length: 30 }, (_, i) => addDays(d, i - 29)), Array.from({ length: 30 }, (_, i) => { const x = parseDate(addDays(d, i - 29)); return `${x.getMonth() + 1}/${x.getDate()}`; })) : ''}
   ${medsCard(d, day)}
+  ${injuryRow(d)}
+  ${brickRow(d)}
   ${feelCard(d)}
   ${gutCard(d)}
-  ${journalCard(day)}
+  ${profile()?.showWeight ? weightCard(Array.from({ length: 30 }, (_, i) => addDays(d, i - 29)), Array.from({ length: 30 }, (_, i) => { const x = parseDate(addDays(d, i - 29)); return `${x.getMonth() + 1}/${x.getDate()}`; })) : ''}
   ${periodRow(d, day)}
+  ${journalCard(day)}
   <div class="spacer"></div>`;
+}
+
+// ===== PLAN =====
+// Like her paper planner: the whole week at once, Monday to Sunday.
+const weekStartOf = d => addDays(d, -((parseDate(d).getDay() + 6) % 7));
+const shortDate = d => parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+function screenPlan() {
+  const t = dateStr(), ws = addDays(weekStartOf(t), (ui.planWeek || 0) * 7), days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
+  const over = db.list('todos').filter(x => !x.done && x.due && x.due < t).sort((a, b) => a.due.localeCompare(b.due));
+  const open = days.flatMap(d => todosDue(d)).filter(x => !x.done).length;
+  return `${header('Plan', open ? `${open} to-do${open === 1 ? '' : 's'} this week` : 'All caught up this week ✓', `<button class="top-btn" data-act="calendar">${icon('calendar')} Month</button>`)}
+  <div class="pad">
+    <div class="wk-nav"><button class="icon-btn" data-act="planWeek" data-n="-1" aria-label="Last week">‹</button>
+      <button class="wk-label" data-act="planWeek" data-n="0">${ui.planWeek ? `${shortDate(ws)} – ${shortDate(days[6])}` : 'This week'}</button>
+      <button class="icon-btn" data-act="planWeek" data-n="1" aria-label="Next week">›</button></div>
+    ${over.length && !ui.planWeek ? `<section class="card overdue"><div class="due-head">Overdue</div>${over.map(todoRow).join('')}</section>` : ''}
+    ${days.map(planDay).join('')}
+    <div class="btn-row mt"><button class="btn soft grow" data-act="eventEdit">＋ Event</button><button class="btn primary grow" data-act="todoEdit">＋ To-do</button></div>
+    <div class="btn-col mt"><button class="btn soft" data-act="calLinks">🔗 Linked calendars${calLinks().length ? ` (${calLinks().length})` : ''}</button><button class="btn soft" data-act="games">🏀 Games</button></div>
+  </div>
+  <div class="spacer"></div>`;
+}
+function planDay(d) {
+  const t = dateStr(), evs = eventsOn(d), tds = todosDue(d), x = parseDate(d), allDone = tds.length && tds.every(z => z.done);
+  return `<section class="card pday ${d === t ? 'today' : ''} ${d < t ? 'past' : ''}">
+    <button class="pday-h" data-act="planDay" data-d="${d}"><span class="pday-dow">${x.toLocaleDateString(undefined, { weekday: 'short' })}</span><span class="pday-n">${x.getDate()}</span>
+      ${d === t ? '<span class="pday-tag">Today</span>' : ''}${allDone ? '<span class="pday-done">✓ All done</span>' : ''}<span class="grow"></span><span class="chev">›</span></button>
+    ${evs.map(e => `<button class="ev ${e.game ? 'game' : ''}" data-act="${e.game ? 'games' : 'eventEdit'}" data-id="${esc(e.id)}"><span class="ev-t">${e.start ? fmtTime(e.start) : 'All day'}</span><span class="grow">${esc(e.title)}${e.where ? `<span class="muted tiny"> · ${esc(e.where)}</span>` : ''}</span></button>`).join('')}
+    ${tds.map(todoRow).join('')}
+    ${!evs.length && !tds.length ? '<p class="muted small pday-free">Free</p>' : ''}
+  </section>`;
+}
+// Tap a day (in Plan or the month calendar): everything on it, then "Go to day".
+function openDay(d) {
+  const s = openSheet({ title: `${parseDate(d).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}`, body: '<div id="dy"></div>',
+    footer: `<button class="btn soft" data-x="td">＋ To-do</button><button class="btn soft" data-x="ev">＋ Event</button><button class="btn primary grow" data-x="go">Go to day ›</button>` });
+  const draw = () => {
+    const evs = eventsOn(d), tds = todosDue(d), ents = dayEntries(d), tot = sumMacros(ents.map(e => e.macros)), day = db.get('days', d) || {};
+    const logged = [ents.length ? `${fmt(tot.cal)} cal · ${fmt(tot.p)}g protein` : '', day.water ? `${fmt(day.water)} oz water` : '', day.sleepMin != null ? `slept ${fmtSleep(day.sleepMin)}` : '', actsOf(day).length ? actsOf(day).join(', ') : ''].filter(Boolean);
+    s.$('#dy').innerHTML = `<div class="due-head">Schedule</div>${evs.length ? evs.map(e => `<button class="ev ${e.game ? 'game' : ''}" data-act="${e.game ? 'games' : 'eventEdit'}" data-id="${esc(e.id)}"><span class="ev-t">${evTime(e)}</span><span class="grow">${esc(e.title)}${e.where ? `<span class="muted tiny"> · ${esc(e.where)}</span>` : ''}</span></button>`).join('') : '<p class="muted small">Nothing scheduled.</p>'}
+      <div class="due-head">Due</div>${tds.length ? tds.map(todoRow).join('') : '<p class="muted small">Nothing due.</p>'}
+      ${logged.length ? `<div class="due-head">Logged</div><p class="small">${logged.map(esc).join(' · ')}</p>` : ''}`;
+  };
+  live.add(draw);
+  s.onClose = () => live.delete(draw);
+  // Rows here are the same as in Plan (data-act), so pass their taps along.
+  s.on('click', '[data-act]', el => acts[el.dataset.act]?.(el.dataset, el));
+  s.on('click', '[data-x="td"]', () => openTodo(null, d));
+  s.on('click', '[data-x="ev"]', () => openEvent(null, d));
+  s.on('click', '[data-x="go"]', () => { while (sheets.length) sheets[sheets.length - 1].close(); ui.date = d; go('today'); });
+  draw();
+}
+// Open sheets that show live data redraw when anything changes.
+const live = new Set();
+db.onChange(() => live.forEach(f => f()));
+
+// ---------- caffeine log ----------
+function cafCard(d) {
+  const list = dayEntries(d).filter(hasCaf), total = list.reduce((s, e) => s + cafOf(e), 0);
+  return `<section class="card caf-card"><div class="card-head"><h3>⚡ Caffeine</h3><span class="muted">${total ? `<b class="tx">${fmt(total)}</b> mg` : ''}</span></div>
+    ${list.length ? list.map(e => `<button class="ev" data-act="editEntry" data-id="${e.id}"><span class="ev-t">${e.time ? fmtTime(e.time) : ''}</span><span class="grow">${esc(e.name)}</span><span class="muted small">${cafOf(e) ? fmt(cafOf(e)) + ' mg' : ''}</span></button>`).join('') : '<p class="muted small">None logged.</p>'}
+    <button class="btn soft full mt" data-act="cafLog">⚡ Log caffeine</button></section>`;
+}
+const CAF_IDEAS = [['Celsius', 200, 10], ['Starbucks Refresher (grande)', 45, 90], ['Energy drink', 160, 0], ['Pre-workout', 150, 0], ['Iced tea', 30, 0], ['Soda', 35, 140]];
+// Recent caffeine drinks re-log in one tap; anything else is a name and mg.
+function openCaf(date = ui.date) {
+  const seen = new Map();
+  db.list('entries').filter(e => cafOf(e) > 0).sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || ''))).forEach(e => { if (!seen.has(e.name)) seen.set(e.name, e); });
+  const recent = [...seen.values()].slice(0, 6);
+  const s = openSheet({
+    title: '⚡ Caffeine',
+    body: `${recent.length ? `<div class="due-head">Again</div><div class="caf-recent">${recent.map(e => `<button class="row" data-x="again" data-id="${e.id}"><div class="row-main"><div class="row-name">${esc(e.name)}</div><div class="row-sub">${fmt(cafOf(e))} mg · ${fmt(e.macros.cal)} cal</div></div><span class="row-plus">＋</span></button>`).join('')}</div>` : ''}
+      <div class="due-head">Something else</div>
+      <div class="chips">${CAF_IDEAS.map(([n, mg, cal]) => `<button class="chip sm" data-x="idea" data-n="${esc(n)}" data-mg="${mg}" data-cal="${cal}">${esc(n)}</button>`).join('')}</div>
+      <div class="field mt"><label>What</label><input id="cn" placeholder="Drink name" autocomplete="off"></div>
+      <div class="grid2"><div class="field"><label>Caffeine (mg)</label><input id="cm" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label>Calories</label><input id="cc" inputmode="decimal" placeholder="0"></div></div>
+      <p class="muted tiny">Ideas are typical amounts. Check the cup or label and change them if needed.</p>`,
+    footer: `<button class="btn primary grow" data-x="save">Log it</button>`,
+  });
+  const meal = defaultMeal();
+  s.on('click', '[data-x="again"]', el => {
+    const src = db.get('entries', el.dataset.id);
+    db.put('entries', { ...src, id: uid(), date, meal, time: date === dateStr() ? timeStr() : defaultTime(date, meal), pcs: src.pcs });
+    s.close(); buzz(); toast(`⚡ ${src.name} logged`);
+  });
+  s.on('click', '[data-x="idea"]', el => { s.$('#cn').value = el.dataset.n; s.$('#cm').value = el.dataset.mg; s.$('#cc').value = el.dataset.cal; });
+  s.on('click', '[data-x="save"]', () => {
+    const caf = num(s.$('#cm').value), cal = num(s.$('#cc').value);
+    if (!(caf > 0)) return toast('Add the mg');
+    db.put('entries', { id: uid(), date, kind: 'quick', time: date === dateStr() ? timeStr() : defaultTime(date, meal), name: s.$('#cn').value.trim() || 'Caffeine', grams: null, meal, macros: { cal, p: 0, c: 0, f: 0, fiber: 0, sugar: 0, sodium: 0, caf } });
+    s.close(); buzz(); toast(`⚡ ${fmt(caf)} mg logged`);
+  });
 }
 
 // ---------- goal rings ----------
@@ -401,9 +584,14 @@ function goalRings(d, day, t, g) {
 }
 // Remembers which rings were already closed so each one celebrates once a day.
 function checkRings() {
-  if (ui.tab !== 'today' || ui.date !== dateStr()) return;
+  if (ui.date !== dateStr()) return;
   const d = ui.date, rs = ringsFor(d), now = rs.filter(r => r.v >= 1).map(r => r.k);
   ui.ringSeen ||= {};
+  // Reaching the calorie goal gets its own moment, once a day.
+  const fed = sumMacros(dayEntries(d).map(e => e.macros)).cal >= goals().cal * 0.9;
+  if (fed && ui.fedSeen === false) setTimeout(() => celebrate('Calorie goal hit ✓ Fueled'), 50);
+  ui.fedSeen = ui.fedDay === d ? (ui.fedSeen || fed) : fed;
+  ui.fedDay = d;
   const before = ui.ringSeen[d];
   ui.ringSeen[d] = now;
   if (!before) return;
@@ -415,20 +603,28 @@ function checkRings() {
 function celebrate(msg, big = false) {
   if (msg) toast(msg);
   buzz();
+  if (document.querySelector('canvas.confetti')) return;
   const cv = document.createElement('canvas');
   cv.className = 'confetti';
-  const W = cv.width = innerWidth * 2, H = cv.height = innerHeight * 2, x = cv.getContext('2d');
+  const k = Math.min(devicePixelRatio || 1, 2), W = innerWidth, H = innerHeight;
+  cv.width = W * k; cv.height = H * k;
+  const x = cv.getContext('2d');
   document.body.appendChild(cv);
   const cols = ['#7b5cd6', '#b9a4f5', '#ffd166', '#06d6a0', '#ef476f', '#ffffff'];
-  const ps = Array.from({ length: big ? 160 : 70 }, () => ({ x: W / 2 + (Math.random() - 0.5) * W * 0.3, y: H * 0.35, vx: (Math.random() - 0.5) * 28, vy: -Math.random() * 34 - 10,
-    s: 8 + Math.random() * 10, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.4, c: cols[Math.random() * cols.length | 0] }));
-  let f = 0;
-  (function step() {
-    x.clearRect(0, 0, W, H);
-    ps.forEach(p => { p.vy += 1.1; p.vx *= 0.985; p.x += p.vx; p.y += p.vy; p.r += p.vr;
-      x.save(); x.translate(p.x, p.y); x.rotate(p.r); x.fillStyle = p.c; x.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); x.restore(); });
-    if (++f < 110) requestAnimationFrame(step); else cv.remove();
-  })();
+  const ps = Array.from({ length: big ? 110 : 55 }, () => ({ x: W / 2 + (Math.random() - 0.5) * W * 0.3, y: H * 0.35, vx: (Math.random() - 0.5) * 14, vy: -Math.random() * 17 - 5,
+    s: 5 + Math.random() * 5, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.4, c: cols[Math.random() * cols.length | 0] }));
+  let t0 = 0, last = 0;
+  // Starts on the next frame so it doesn't fight the screen redraw.
+  requestAnimationFrame(function step(ts) {
+    t0 ||= ts; const dt = Math.min(2, (ts - (last || ts)) / 16.7 || 1); last = ts;
+    x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, cv.width, cv.height);
+    for (const p of ps) {
+      p.vy += 0.55 * dt; p.vx *= 0.985; p.x += p.vx * dt; p.y += p.vy * dt; p.r += p.vr * dt;
+      const c = Math.cos(p.r) * k, s = Math.sin(p.r) * k;
+      x.setTransform(c, s, -s, c, p.x * k, p.y * k); x.fillStyle = p.c; x.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2);
+    }
+    if (ts - t0 < 1900) requestAnimationFrame(step); else cv.remove();
+  });
 }
 // A small tap of haptics: vibrate() on Android, and on iPhone (Safari 18+)
 // toggling a hidden switch makes the phone tick.
@@ -448,6 +644,7 @@ function applyResults(res) {
 }
 try { applyResults(JSON.parse(localStorage.getItem('pulseResults') || '{}')); } catch {}
 async function refreshResults() {
+  refreshSchedule();
   try {
     const res = await notify.fetchResults();
     if (!res) return;
@@ -518,7 +715,45 @@ function ptToLocal(date, time) {
   const at = new Date(guess - (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - guess));
   return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
 }
-GAMES.forEach(g => { if (g.time) { g.ptTime = g.time; g.time = ptToLocal(g.date, g.time); } });
+// Schedule changes: the Pilots' feed (postponed or moved games) plus her own edits,
+// laid over the schedule that shipped with the app. Edits always win.
+const BASE_GAMES = GAMES.map(g => ({ ...g, key: g.date + '|' + g.opp }));
+const sameTeam = (a, b) => { const n = x => x.toLowerCase().replace(/[^a-z]/g, ''); return n(a) === n(b) || n(a).startsWith(n(b)) || n(b).startsWith(n(a)); };
+function applySchedule() {
+  let feed = [];
+  try { feed = JSON.parse(localStorage.getItem('pulseSchedule') || '[]'); } catch {}
+  const edits = profile()?.gameEdits || {};
+  const out = BASE_GAMES.map(b => {
+    const g = { ...b, ptTime: b.time, postponed: false };
+    const f = feed.filter(x => sameTeam(x.opp, b.opp) && x.home === b.home)
+      .sort((x, y) => Math.abs(parseDate(x.date) - parseDate(b.date)) - Math.abs(parseDate(y.date) - parseDate(b.date)))[0];
+    if (f) Object.assign(g, { date: f.date, ptTime: f.time || g.ptTime, postponed: f.postponed, note: f.note || '' });
+    const e = edits[b.key];
+    if (e) {
+      if (e.date) g.date = e.date;
+      if (e.postponed != null) g.postponed = e.postponed;
+      if (e.venue != null) g.venue = e.venue;
+    }
+    // Her own time is typed in her phone's time; feed times are Pacific.
+    g.time = e?.time || (g.ptTime ? ptToLocal(g.date, g.ptTime) : null);
+    g.edited = !!e;
+    return g;
+  }).sort((a, b) => a.date.localeCompare(b.date));
+  GAMES.splice(0, GAMES.length, ...out);
+  try { applyResults(JSON.parse(localStorage.getItem('pulseResults') || '{}')); } catch {}
+}
+async function refreshSchedule() {
+  try {
+    const r = await fetch(CONFIG_PUSH() + '/schedule');
+    const list = await r.json();
+    if (!Array.isArray(list) || !list.length) return;
+    const before = JSON.stringify(GAMES);
+    localStorage.setItem('pulseSchedule', JSON.stringify(list));
+    applySchedule();
+    if (JSON.stringify(GAMES) !== before) { queueRender(); scheduleNotify(); }
+  } catch {}
+}
+try { applySchedule(); } catch {}
 const zoneTag = () => HERE === PT ? '' : ' ' + (new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(new Date()).find(x => x.type === 'timeZoneName')?.value || '');
 const gameTime = g => g.time ? fmtTime(g.time) + zoneTag() : 'Time TBA';
 const vsAt = g => g.home ? 'vs' : '@';
@@ -588,11 +823,13 @@ function gameBanner(date) {
     ${plan ? `<span class="gb-tap">${ui.gameTip ? '✕' : "🍽️ What's next"}</span>` : ''}</div>
     ${plan && ui.gameTip ? gameNudge(date, g) : ''}</section>`;
   }
+  const pp = date === dateStr() ? GAMES.find(x => x.postponed && x.date >= addDays(date, -3) && x.date <= addDays(date, 7) && !ppHidden().includes(x.key)) : null;
+  const ppNote = pp ? `<div class="pp-note"><button class="grow" data-act="games">${vsAt(pp)} ${esc(pp.opp)} (${shortDate(pp.date)}) was postponed. New date not set yet.</button><button class="pp-x" data-act="ppHide" data-k="${esc(pp.key)}" aria-label="Hide">✕</button></div>` : '';
   const n = nextGame(addDays(date, 1));
-  if (!n || date < dateStr()) return '';
+  if (!n || date < dateStr()) return ppNote;
   const days = Math.round((parseDate(n.date) - parseDate(date)) / 864e5);
-  if (days > 6) return '';
-  return `<button class="next-game" data-act="calendar"><img class="team-logo sm" src="${teamLogo(n)}" alt="">
+  if (days > 6) return ppNote;
+  return `${ppNote}<button class="next-game" data-act="calendar"><img class="team-logo sm" src="${teamLogo(n)}" alt="">
     <span class="grow">Next game <b>${days === 1 ? 'tomorrow' : parseDate(n.date).toLocaleDateString(undefined, { weekday: 'long' })}</b> ${vsAt(n)} ${esc(n.opp)}
     ${days === 1 && date === dateStr() ? `<div class="muted tiny">Tonight: a carb-rich dinner and bed by ${fmtTime(bedGoal(date))}</div>` : ''}</span><span class="muted">${gameTime(n)}</span></button>`;
 }
@@ -672,6 +909,15 @@ function sleepStreak() {
   }
   return n;
 }
+// Caffeine: logged and shown, no goal. Within 8 hours of bed it gets a mention.
+const cafOf = e => e.macros?.caf || 0;
+const hasCaf = e => cafOf(e) > 0 || entryTags(e).includes('Caffeine');
+function lateCaffeine(date) {
+  if (date !== dateStr()) return null;
+  const cut = fromMin(toMin(bedGoal(date)) - 480);
+  const late = dayEntries(date).filter(e => hasCaf(e) && e.time && toMin(e.time) >= toMin(cut));
+  return late.length ? late[late.length - 1] : null;
+}
 function sleepCard(date, day) {
   const last7 = Array.from({ length: 7 }, (_, i) => db.get('days', addDays(date, -i))).filter(x => x?.bed);
   const near = last7.filter(nearPlan).length, plan = date >= dateStr() ? bedPlan(date) : null;
@@ -683,6 +929,7 @@ function sleepCard(date, day) {
         ${day.bed ? `<div class="sleep-times"><span>🛏️ ${fmtTime(day.bed)}</span><span>☀️ ${day.wake ? fmtTime(day.wake) : '–'}</span></div>` : ''}
       </div>` : `<p class="muted small">Tap to log last night.</p>`}
     ${plan ? tonightRow(date, plan) : ''}
+    ${plan && lateCaffeine(date) ? `<p class="caf-note">⚡ Caffeine at ${fmtTime(lateCaffeine(date).time)}, within 8 hours of bed. It can make it harder to fall asleep tonight.</p>` : ''}
     ${last7.length ? `<div class="sleep-goal"><span>🎯 Near your planned bedtime <b>${near} of the last ${last7.length} nights</b></span>${st >= 2 ? `<span class="streak">🔥 ${st} in a row</span>` : ''}</div>` : ''}
   </section>`;
 }
@@ -996,6 +1243,8 @@ const hmMinus = (t, m) => { const x = +t.slice(0, 2) * 60 + +t.slice(3) - m; ret
 const medsAm = () => [profile()?.medsAm, profile()?.medsTime].find(v => /^\d{2}:\d{2}$/.test(v || '') && v >= '05:00' && v <= '13:00') || '09:00';
 const medsPm = () => profile()?.medsPm || '20:00';
 const nOn = k => profile()?.[k] ?? NOTIFS.find(n => n[0] === k)[3];
+const shownNotifs = () => NOTIFS.filter(n => n[0] !== 'n_period' || periodOn());
+const allNotifsOn = () => shownNotifs().every(n => nOn(n[0]));
 function notifyItems() {
   const t = dateStr(), items = [];
   // Easter egg: no setting for this one.
@@ -1004,7 +1253,7 @@ function notifyItems() {
     const d = addDays(t, i), b = bedGoal(d), at = fromMin(toMin(b) - 30), on = at < '12:00' ? addDays(d, 1) : d;
     if (on > t || (on === t && at > timeStr())) items.push({ id: 'bed-' + d, date: on, at, ttl: 1800, keep: 30 + sleepGoal(), title: '🌙 Bedtime in 30 min', body: `Bed by ${fmtTime(b)} to get your sleep in.` });
   }
-  if (nOn('n_game')) GAMES.filter(g => g.date >= t).slice(0, 10).forEach(g =>
+  if (nOn('n_game')) GAMES.filter(g => g.date >= t && !g.postponed).slice(0, 10).forEach(g =>
     items.push({ id: 'game-' + g.date, date: g.date, at: g.time && g.time < '12:00' ? hmMinus(g.time, 180) : '09:00', ttl: 10800, keep: 900, title: '🏀 GAME DAY', body: `${vsAt(g)} ${g.opp} · ${gameTime(g)}${g.venue ? ` · ${g.venue}` : ''}` }));
   if (nOn('n_week')) { const dow = parseDate(t).getDay(), sun = addDays(t, (7 - dow) % 7); items.push({ id: 'week-' + sun, date: sun, at: '18:00', ttl: 10800, keep: 360, open: 'wrapped', title: '📊 Your week', body: 'Sleep, recovery and fueling, all in one card.' }); }
   const meds = medList();
@@ -1060,6 +1309,7 @@ function notifyCard() {
     <h3>🔔 Notifications</h3>
     <p class="muted small">${intro}</p>
     ${ui.notifyOn ? '' : `<button class="btn primary full" data-act="notifyOn">Turn on notifications</button>`}
+    <button class="switch-row all-row" data-act="toggleAll"><span class="grow"><b>All reminders</b><div class="muted tiny">Turn every one below on or off at once.</div></span><span class="tick ${allNotifsOn() ? 'on' : ''}">${allNotifsOn() ? '✓' : ''}</span></button>
     ${NOTIFS.filter(n => n[0] !== 'n_period' || periodOn()).map(([k, l, sub, def]) => switchRow(k, l, sub, def) + (k === 'n_meds' && nOn('n_meds') ? medsTimeRow() : '')).join('')}
   </section>`;
 }
@@ -1253,7 +1503,7 @@ function recoveryHelpers() {
       dinner: last ? last < '19:00' : null,
       bed: d.bed ? nearPlan(d) : null,
       water: pd.water != null ? pd.water >= g.water : null,
-      caffeine: ents.length ? !ents.some(e => e.time >= '14:00' && entryTags(e).includes('Caffeine')) : null,
+      caffeine: ents.length ? !ents.some(e => e.time >= '14:00' && hasCaf(e)) : null,
       protein: t ? t.p >= g.p * 0.95 : null,
       sleep: d.sleepMin != null ? d.sleepMin >= sleepGoal() : null,
     } });
@@ -1289,10 +1539,16 @@ function askContext() {
   const opt = OPTIONAL_MACROS.filter(([k]) => tracks(k)).map(([k, l]) => `${g[k]} g ${l.toLowerCase()}`), off = OPTIONAL_MACROS.filter(([k]) => !tracks(k)).map(([, l]) => l.toLowerCase());
   lines.push(`Daily goals: ${[`${g.cal} cal`, `${g.p} g protein`, ...opt, `${g.water} oz water`].join(', ')}. Sleep goal ${fmtSleep(sleepGoal())}.${p.goalsGuess ? " These goals are Pulse's generic starting point, NOT from her dietitian." : ''}${off.length ? ` She chose not to track ${off.join(' or ')}, so don't coach on those goals.` : ''}`);
   if (meds) lines.push(`Meds & vitamins: ${meds}.`);
+  { const ev = eventsOn(t).filter(e => !e.game), tm = eventsOn(addDays(t, 1)).filter(e => !e.game); if (ev.length || tm.length) lines.push(`Schedule today: ${ev.map(e => `${e.start || 'all day'} ${e.title}`).join('; ') || 'nothing'}. Tomorrow: ${tm.map(e => `${e.start || 'all day'} ${e.title}`).join('; ') || 'nothing'}.`); }
+  { const td = todosSoon(); if (td.length) lines.push(`To-dos due soon: ${td.map(x => `${x.title}${x.cls ? ` (${x.cls})` : ''} due ${x.due}${x.time ? ' ' + x.time : ''}`).join('; ')}.`); }
+  { const ip = injuryPatterns().filter(x => x.found.length); if (ip.length) lines.push(`Injury patterns the app found: ${ip.map(x => `${x.name} worse ${x.found.map(f => f.label).join(', ')}`).join('; ')}.`); }
+  if (brickNow()) lines.push(`Her phone is bricked right now (${dur(brickMin(brickNow()))} so far).`);
   lines.push('She weighs almost everything she eats on a food scale, so logged grams are exact. Give portion advice in grams.');
   const tp = bedPlan(t); lines.push(`Tonight: sleep need ${fmtSleep(tp.need.min)}${tp.need.why.length ? ` (${tp.need.why.join(', ')})` : ''}, bed by ${fmtTime(tp.bed)}, up at ${fmtTime(tp.wake)}.`);
   const r = readiness(t); if (r) lines.push(`Readiness today: ${r.t} (${r.facts.join(', ')}).`);
-  const next = GAMES.filter(x => x.date >= t && !x.result).slice(0, 3).map(x => `${x.date} ${vsAt(x)} ${x.opp} ${gameTime(x)}`);
+  const pp = GAMES.filter(x => x.postponed && x.date >= addDays(t, -14));
+  if (pp.length) lines.push(`Postponed games (new date not set yet): ${pp.map(x => `${vsAt(x)} ${x.opp}, was ${x.date}`).join('; ')}.`);
+  const next = GAMES.filter(x => x.date >= t && !x.result && !x.postponed).slice(0, 3).map(x => `${x.date} ${vsAt(x)} ${x.opp} ${gameTime(x)}`);
   const past = GAMES.filter(x => x.result).slice(-3).map(x => `${x.date} ${vsAt(x)} ${x.opp}: ${x.result}`);
   if (next.length) lines.push(`Next games: ${next.join('; ')}.`);
   if (past.length) lines.push(`Recent results: ${past.join('; ')}.`);
@@ -1341,6 +1597,7 @@ function askContext() {
       parts.push(`food: ${ents.map(e => `${e.time || ''} ${e.name}`.trim()).slice(0, 14).join(', ')}`);
     }
     if (day.water) parts.push(`water ${day.water} oz`);
+    { const cf = ents.filter(hasCaf); if (cf.length) parts.push(`caffeine ${fmt(cf.reduce((s, e) => s + cafOf(e), 0))} mg (last at ${cf[cf.length - 1].time || '?'})`); }
     if (day.sleepMin != null || day.bed) parts.push(`slept ${day.sleepMin != null ? fmtSleep(day.sleepMin) : '?'}${day.bed ? ` (bed ${day.bed}, up ${day.wake || '?'})` : ''}`);
     const w = [day.recovery != null && `recovery ${day.recovery}%`, day.hrv != null && `HRV ${day.hrv}`, day.rhr != null && `RHR ${day.rhr}`, day.strain != null && `strain ${day.strain}`, day.burned != null && `burned ${day.burned}`, day.active != null && `active cal ${day.active}`, day.resting != null && `resting cal ${day.resting}`,day.steps != null && `steps ${day.steps}`].filter(Boolean);
     if (w.length) parts.push(w.join(', '));
@@ -1348,6 +1605,9 @@ function askContext() {
     const gm = gameOn(d); if (gm) parts.push(`GAME ${vsAt(gm)} ${gm.opp}${gm.result ? ` ${gm.result}` : ''}`);
     if (medList().length && day.meds) parts.push(`meds ${Object.keys(day.meds).length}/${medList().length}`);
     if (day.period) parts.push(`period day${day.periodFeel?.length ? ` (${day.periodFeel.join(', ')})` : ''}`);
+    { const pn = painOf(d); if (pn.length) parts.push(`body: ${pn.map(x => `${spotName(x)} ${x.kind.toLowerCase()} ${x.pain}/10${x.notes ? ` "${x.notes}"` : ''}`).join(', ')}`); }
+    { const bm = brickOn(d); if (bm >= 1) parts.push(`phone bricked ${dur(bm)}`); }
+    if (day.photos?.length) parts.push(`journal photos: ${day.photos.map(p => p.desc || 'photo').join(' | ')}`);
     if (day.weight != null) parts.push(`weight ${day.weight} lb`);
     st.forEach(e => parts.push(`STOMACH ${e.time} severity ${e.severity}/5: ${(e.symptoms || []).join(', ')}${e.context?.length ? ` [${e.context.join(', ')}]` : ''}${e.notes ? ` "${e.notes}"` : ''}`));
     fl.forEach(e => parts.push(`FELT OFF ${e.time} level ${e.level}/5: ${(e.feelings || []).join(', ')}${e.context?.length ? ` [${e.context.join(', ')}]` : ''}${e.notes ? ` "${e.notes}"` : ''}`));
@@ -1435,24 +1695,30 @@ const TOUR = [
   ['#fab', 'Log food', 'Search, scan a barcode, use a recipe, or snap a photo of your plate.'],
   ['.rings', 'Daily rings', 'Protein, water, sleep and meds. Tap one to jump to it.'],
   ['.game-banner, .next-game', 'Games', 'Your next game shows up here. On game day, tap it to see what to eat next.'],
-  ['.sleep-card', 'Sleep', "Log last night and see tonight's bedtime, planned around your wake-up and games."],
+  ['.nextup, .nextup-empty', 'Up next', "What's left on today's schedule and what's due soon."],
+  ['.quick', 'Quick log', 'Water, caffeine, Brick and anything that hurts, in one tap.'],
   ['.ask-pill', 'Ask Pulse', 'Ask about your sleep, food, stomach or games. Answers come from what you log. Tap the mic to talk.'],
-  ['[data-tab="foods"]', 'Foods', "Everything you've eaten, plus your own foods. Easy to re-log."],
-  ['[data-tab="recipes"]', 'Recipes', 'Save recipes and meal preps, and see how many containers are left.'],
+  ['[data-tab="food"]', 'Food', 'Meals, water and caffeine for the day, plus your saved foods and recipes.'],
+  ['[data-tab="plan"]', 'Plan', 'Your week like a planner: practices, class, games and everything due.'],
+  ['[data-tab="body"]', 'Body', 'Sleep, recovery, training, meds, anything that hurts, and your journal.'],
   ['[data-tab="trends"]', 'Trends', 'Your week and month, what helps you recover, and what might bother your stomach.'],
-  ['[data-tab="me"]', 'Me', 'Goals, meds, wake-up times and reminders. You can replay this tour here too.'],
+  ['.me-btn', 'Settings', 'Goals, meds, wake-up times, reminders and linked calendars. You can replay this tour here too.'],
 ];
-function startTour() {
+// A step is [selector, title, text] or [selector, title, text, tab] to show it on another tab.
+function startTour(list = TOUR, onEnd) {
   if (document.querySelector('.tour')) return;
-  if (ui.tab !== 'today' || ui.date !== dateStr()) { ui.date = dateStr(); go('today'); }
-  const steps = TOUR.filter(([sel]) => document.querySelector(sel));
+  ui.date = dateStr(); ui.foodView = 'log'; ui.planWeek = 0;
+  if (ui.tab !== 'today') go('today'); else render();
+  const steps = list.filter(([sel, , , tab]) => tab || document.querySelector(sel));
   let i = 0;
   const el = document.createElement('div');
   el.className = 'tour';
   document.body.appendChild(el);
   const end = () => {
     el.remove(); removeEventListener('resize', place);
-    if (DEMO) { try { localStorage.setItem('pulseTourDemo', '1'); } catch {} } else saveProfile({ toured: true });
+    if (ui.tab !== 'today') go('today');
+    if (onEnd) return onEnd();
+    if (DEMO) { try { localStorage.setItem('pulseTourDemo', '1'); } catch {} } else saveProfile({ toured: true, seenVersion: APP_VERSION });
   };
   function place() {
     const [sel, title, text] = steps[i], t = document.querySelector(sel);
@@ -1464,7 +1730,11 @@ function startTour() {
         <div class="tour-btns">${i === steps.length - 1 ? '<span></span>' : '<button class="tour-skip" data-t="skip">Skip tour</button>'}<button class="btn primary" data-t="next">${i === steps.length - 1 ? 'Done' : 'Next'}</button></div></div>`;
   }
   function show() {
+    const tab = steps[i][3] || 'today';
+    if (ui.tab !== tab) go(tab);
     const t = document.querySelector(steps[i][0]);
+    // Skip a step whose spot isn't on screen today (no game, nothing due…).
+    if (!t) { if (i < steps.length - 1) { i++; return show(); } return end(); }
     if (!t.closest('#nav, #fab')) t.scrollIntoView({ block: 'center' });
     setTimeout(place, 60);
   }
@@ -1479,11 +1749,50 @@ function startTour() {
 }
 const tourDue = () => DEMO ? !localStorage.getItem('pulseTourDemo') : !NEW && !profile()?.toured;
 
+// ---------- update tours ----------
+// Each release that changes how the app works gets an entry here. The first time
+// she opens the new version she gets a short "what's new" card, then a walk-through.
+const UPDATES = {
+  '1.5': {
+    title: 'Pulse got an update',
+    lines: ['📱 New layout: a shorter Today, plus Food, Plan and Body tabs', '📅 A week planner for assignments, with your Teamworks or school calendar', '⚡ Caffeine, water in any amount, injuries, Brick time and journal photos', '⚙️ Settings moved to the gear in the top corner'],
+    steps: [
+      ['.quick', 'Log anything', 'Every kind of log is one tap here. Each button takes you to the right tab.'],
+      ['.nextup, .nextup-empty', 'Up next', "What's left on today's schedule and what's due soon."],
+      ['.me-btn', 'Settings', 'Your goals, meds, reminders and linked calendars are behind this gear now.'],
+      ['[data-tab="food"]', 'Food tab', 'Meals, water, caffeine and meal prep for the day. My foods and Recipes are at the top.', 'food'],
+      ['.caf-card', 'Caffeine', 'Log drinks with their mg. Caffeine close to bedtime shows on your sleep card.', 'food'],
+      ['[data-tab="plan"]', 'Plan tab', 'Your whole week like a planner: class, practice, games and everything due.', 'plan'],
+      ['.pday.today', 'Tap a day', "See everything on it and what's due. Go to day takes you there.", 'plan'],
+      ['[data-tab="body"]', 'Body tab', 'Sleep, training, recovery, meds, anything that hurts, Brick and your journal.', 'body'],
+      ['.inj-card', 'Injuries', 'Log where it hurts and how bad. Trends shows what seems to flare it up.', 'body'],
+      ['.journal-card', 'Journal photos', 'Add photos to your journal. Ask Pulse can see what is in them.', 'body'],
+    ],
+  },
+};
+const seenVersion = () => DEMO ? (() => { try { return localStorage.getItem('pulseSeenVer-' + DEMO_KEY); } catch { return null; } })() : profile()?.seenVersion;
+const markSeen = () => { if (DEMO) { try { localStorage.setItem('pulseSeenVer-' + DEMO_KEY, APP_VERSION); } catch {} } else saveProfile({ seenVersion: APP_VERSION }); };
+const updateDue = () => !NEW && UPDATES[APP_VERSION] && seenVersion() !== APP_VERSION;
+function showUpdate(force = false) {
+  const u = UPDATES[APP_VERSION];
+  if (!u || (!force && !updateDue())) return;
+  const s = openSheet({
+    title: '',
+    body: `<div class="nudge"><div class="nudge-e">✨</div><h3>${u.title}</h3><p class="muted">Here's what's new. Take a quick look around?</p></div>
+      <div class="upd-list">${u.lines.map(l => `<div class="upd-line">${esc(l)}</div>`).join('')}</div>`,
+    footer: `<div class="nudge-btns"><button class="btn primary full" data-x="go">Show me around</button><button class="btn ghost full" data-x="later">Later</button></div>`,
+  });
+  markSeen();
+  s.on('click', '[data-x="go"]', () => { s.close(); setTimeout(() => startTour(u.steps, () => toast("That's everything new ✓")), 250); });
+  s.on('click', '[data-x="later"]', () => { s.close(); toast("Settings → What's new shows this again"); });
+}
+
 // ---------- journal ----------
 function journalCard(day) {
-  return `<section class="card tap" data-act="journal">
+  return `<section class="card tap journal-card" data-act="journal">
     <div class="card-head"><h3>📓 Journal <span class="lock">🔒</span></h3><span class="link">${day.notes ? 'Edit' : 'Write'}</span></div>
-    ${day.notes ? `<p class="journal-txt">${esc(day.notes)}</p>` : `<p class="muted small">Practice, mood, anything. Just for you.</p>`}
+    ${day.notes ? `<p class="journal-txt">${esc(day.notes)}</p>` : day.photos?.length ? '' : `<p class="muted small">Practice, mood, anything. Just for you.</p>`}
+    ${day.photos?.length ? `<div class="j-photos">${day.photos.slice(0, 4).map(p => `<img src="${p.img}" alt="">`).join('')}</div>` : ''}
     <button class="talk-btn" data-act="journalTalk">🎙️ Talk instead of typing</button>
   </section>`;
 }
@@ -1494,6 +1803,9 @@ function openJournal(date = ui.date, talk = false) {
     title: `Journal · ${fmtDay(date)}`, full: true, lock: true,
     body: `<button class="talk-big" data-x="talk"><span class="talk-dot"></span><span id="tl">🎙️ Tap and talk</span></button>
       <textarea id="jt" class="journal-in" rows="10" placeholder="How did today go?">${esc(d.notes || '')}</textarea>
+      <div class="j-photos edit" id="jp"></div>
+      <label class="btn soft full">📷 Add a photo<input type="file" accept="image/*" hidden id="jpi"></label>
+      <p class="muted tiny center">Ask Pulse can see what's in your photos.</p>
       <p class="muted tiny center">🔒 Just for you. Stays on this phone.</p>`,
     footer: `<button class="btn ghost" data-x="close">Cancel</button><button class="btn primary grow" data-x="save">Save</button>`,
   });
@@ -1518,8 +1830,12 @@ function openJournal(date = ui.date, talk = false) {
     try { rec.start(); btn.classList.add('on'); s.$('#tl').textContent = 'Listening… tap to stop'; } catch { stop(); ta.focus(); }
   }
   s.on('click', '[data-x="talk"]', () => rec ? stop() : start());
-  s.on('click', '[data-x="save"]', () => { stop(); d.notes = ta.value.trim(); db.put('days', d); s.close(); toast('Saved'); });
+  s.on('click', '[data-x="save"]', () => { stop(); db.put('days', { ...(db.get('days', date) || d), notes: ta.value.trim() }); s.close(); toast('Saved'); });
   s.on('click', '[data-x="close"]', stop);
+  const drawPh = () => { s.$('#jp').innerHTML = (db.get('days', date)?.photos || []).map(p => `<div class="jp"><img src="${p.img}" alt=""><button data-x="rmph" data-id="${p.id}" aria-label="Remove">✕</button></div>`).join(''); };
+  s.on('change', '#jpi', async el => { const f = el.files?.[0]; if (!f) return; toast('Adding photo…'); try { const p = addJournalPhoto(date, f); setTimeout(drawPh, 300); await p; drawPh(); } catch (e) { toast(e.message); } el.value = ''; });
+  s.on('click', '[data-x="rmph"]', el => { const cur = { ...(db.get('days', date) || d) }; cur.photos = (cur.photos || []).filter(p => p.id !== el.dataset.id); db.put('days', cur); drawPh(); });
+  drawPh();
   if (talk) start(); else ta.focus();
 }
 
@@ -1531,7 +1847,7 @@ function prepRows(list, act = 'eatPrep') {
   return list.map(p => {
     const age = prepAge(p), m = prepMacros(p);
     return `<div class="prep">
-      <button class="prep-main" data-act="editPrep" data-id="${p.id}">${thumb(p.photo, '🥡')}
+      <button class="prep-main" data-act="editPrep" data-id="${p.id}">${thumb(p.photo, foodEmoji(p.name, '🥡'))}
         <div class="row-main"><div class="row-name">${esc(p.name)}</div>
         <div class="row-sub">${fmt(m.cal)} cal · ${macroLine(m)}</div>
         <div class="prep-meta"><b>${fmt(p.left)} of ${p.containers} left</b> · ${age === 0 ? 'made today' : age === 1 ? 'made yesterday' : `made ${age} days ago`}${age >= 4 ? ` <span class="warn-t">· eat soon</span>` : ''}</div></div></button>
@@ -1570,7 +1886,7 @@ function openPrep({ recipe = null, prep = null }) {
     containers: info.servings || 5, totalG: Math.round(info.weight) || '' };
   const s = openSheet({
     title: prep ? 'Meal prep batch' : 'Meal prep', full: true, lock: true,
-    body: `<div class="amt-food">${thumb(p.photo, '🥡')}<div><div class="amt-name">${esc(p.name)}</div><div class="muted small">${prep ? `Made ${fmtDay(p.madeOn)}` : 'Split a batch into containers'}</div></div></div>
+    body: `<div class="amt-food">${thumb(p.photo, foodEmoji(p.name, '🥡'))}<div><div class="amt-name">${esc(p.name)}</div><div class="muted small">${prep ? `Made ${fmtDay(p.madeOn)}` : 'Split a batch into containers'}</div></div></div>
       <div class="grid2 mt">
         <div class="field"><label>Containers</label><input id="pc" inputmode="numeric" value="${p.containers}"></div>
         <div class="field"><label>Total weight</label><div class="unit-in"><input id="pt" inputmode="decimal" value="${fmtIn(p.totalG)}" placeholder="whole batch"><span>g</span></div></div>
@@ -1634,11 +1950,39 @@ function fuelCard(d, day, t, g, ents) {
 function waterCard(day, g) {
   const w = day.water || 0, pct = Math.min(100, w / (g.water || 1) * 100);
   return `<section class="card water">
-    <div class="card-head"><h3>💧 Water</h3><span class="muted"><b class="tx">${fmt(w)}</b> / ${fmt(g.water)} oz</span></div>
+    <div class="card-head"><h3>💧 Water</h3><button class="link muted" data-act="waterAmt"><b class="tx">${fmt(w)}</b> / ${fmt(g.water)} oz</button></div>
     <div class="w-track"><i style="width:${pct}%"></i></div>
-    <div class="w-btns"><button data-act="water" data-oz="-8" aria-label="Remove 8 oz">−</button>
-      <button data-act="water" data-oz="8">+8</button><button data-act="water" data-oz="16">+16</button><button data-act="water" data-oz="32">+32</button></div>
+    <div class="w-btns"><button data-act="water" data-oz="-8" aria-label="Remove 8 oz">−8</button>
+      <button data-act="water" data-oz="8">+8</button><button data-act="water" data-oz="16">+16</button><button data-act="water" data-oz="32">+32</button>
+      <button data-act="waterAmt" aria-label="Type an amount"><svg class="w-ic" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></button></div>
   </section>`;
+}
+// Type any amount: add it, take it away, or set the day's total.
+function openWater() {
+  const cur = db.get('days', ui.date)?.water || 0;
+  let unit = 'oz';
+  const s = openSheet({
+    title: '💧 Water',
+    body: `<p class="muted small center">So far: <b>${fmt(cur)} oz</b></p>
+      <div class="amt-input"><input id="wa" type="text" inputmode="decimal" placeholder="0" autocomplete="off" aria-label="Amount">
+        <div class="seg unit"><button data-x="u" data-u="oz" class="on">oz</button><button data-x="u" data-u="ml">ml</button></div></div>`,
+    footer: `<button class="btn ghost" data-x="sub">− Take away</button><button class="btn soft" data-x="set">Set total</button><button class="btn primary grow" data-x="add">＋ Add</button>`,
+  });
+  const oz = () => { const v = num(s.$('#wa').value); return unit === 'ml' ? v / 29.574 : v; };
+  s.on('click', '[data-x="u"]', el => { unit = el.dataset.u; s.$$('[data-x="u"]').forEach(b => b.classList.toggle('on', b === el)); s.$('#wa').focus(); });
+  const go = mode => {
+    const v = Math.round(oz() * 10) / 10;
+    if (!(v > 0) && mode !== 'set') { s.$('#wa').focus(); return toast('Type an amount'); }
+    const d = { ...(db.get('days', ui.date) || { id: ui.date, date: ui.date }) };
+    d.water = Math.max(0, mode === 'set' ? v : (d.water || 0) + (mode === 'sub' ? -v : v));
+    db.put('days', d);
+    s.close();
+    toast(`💧 ${fmt(d.water)} oz today`);
+  };
+  s.on('click', '[data-x="add"]', () => go('add'));
+  s.on('click', '[data-x="sub"]', () => go('sub'));
+  s.on('click', '[data-x="set"]', () => go('set'));
+  s.$('#wa').focus();
 }
 
 function bodyCard(d) {
@@ -1698,7 +2042,7 @@ function foodListHTML() {
     <p>Photograph the nutrition label or scan the barcode once. After that, enter the grams you weighed and the macros are calculated for you.</p>
     <button class="btn primary" data-act="newFood">＋ Add your first food</button></div>`;
   if (!list.length) return `<p class="muted center">No foods match “${esc(ui.foodQ)}”.</p>`;
-  return list.map(f => `<button class="row" data-act="food" data-id="${f.id}">${thumb(f.photo, '🥣')}
+  return list.map(f => `<button class="row" data-act="food" data-id="${f.id}">${thumb(f.photo, foodEmoji(f.name, '🥣'))}
     <div class="row-main"><div class="row-name">${esc(f.name)}${f.fav ? ' <span class="star">★</span>' : ''}${gfBadge('food', f)}</div><div class="row-sub">${foodSub(f)}</div></div><span class="chev">›</span></button>`).join('');
 }
 function screenFoods() {
@@ -1725,7 +2069,7 @@ function recipeListHTML() {
   return list.map(r => {
     const info = recipeInfo(r, getFood);
     const per = info.servings ? scale(info.total, 1 / info.servings) : scale(info.per, 100);
-    return `<button class="row" data-act="recipe" data-id="${r.id}">${thumb(r.photo, '🍲')}
+    return `<button class="row" data-act="recipe" data-id="${r.id}">${thumb(r.photo, foodEmoji(r.name, '🍲'))}
       <div class="row-main"><div class="row-name">${esc(r.name)}${gfBadge(r.ingredients ? 'recipe' : 'food', r)}</div>
       <div class="row-sub">${fmt(per.cal)} cal ${info.servings ? '/ serving' : '/ 100 g'} · ${macroLine(per)}</div></div><span class="chev">›</span></button>`;
   }).join('') || `<p class="muted center">No recipes match.</p>`;
@@ -1869,6 +2213,8 @@ function screenTrends() {
     ${top.length ? `<section class="card"><h3>Most-logged foods</h3>${top.map(([name, c]) => `<div class="kv-row"><span>${esc(name)}</span><span class="muted">${c.n}×</span></div>`).join('')}</section>` : ''}
 
     ${recoveryCard()}
+    ${injuryTrends()}
+    ${brickTrends(dates)}
     ${feelTrends(dates)}
     ${gutTrends(dates)}
     ${cycleTrends()}
@@ -2007,14 +2353,15 @@ function screenMe() {
   const cloud = sync.enabled && sync.currentUser();
   const gi = (k, label, unit) => `<div class="field"><label>${label}</label><div class="unit-in"><input inputmode="decimal" value="${g[k]}" data-change="goal" data-k="${k}"><span>${unit}</span></div></div>`;
   const statusTxt = { idle: 'Ready', syncing: 'Syncing…', ok: 'All backed up ✓', error: 'Sync problem — will retry', offline: 'Offline — will sync later' }[sync.status];
-  return `${header('Me')}
+  return `${header('Settings', 'Goals, meds, reminders and more')}
   <div class="pad">
     <section class="card profile">
       <div class="avatar">${esc(firstName()[0]?.toUpperCase() || '?')}</div>
       <div class="grow"><input class="name-in" value="${esc(p.name || '')}" placeholder="Your name" data-change="name" aria-label="Your name">
       <div class="muted small">${cloud ? esc(cloud.email) : '🔒 Private. Stays on this phone.'}</div></div>
     </section>
-    <button class="btn soft full" data-act="tour">🧭 Show me around</button>
+    <div class="btn-col"><button class="btn soft" data-act="calLinks">🔗 Linked calendars${calLinks().length ? ` (${calLinks().length})` : ''}</button><button class="btn soft" data-act="games">🏀 Games schedule</button></div>
+    <div class="btn-col mt"><button class="btn soft" data-act="updateTour">✨ What's new</button><button class="btn soft" data-act="tour">🧭 Show me around</button></div>
     ${DEMO ? '<button class="btn soft full mt" data-act="winPreview">🏆 Preview the win screen</button>' : ''}
 
     <section class="card">
@@ -2054,8 +2401,9 @@ function screenMe() {
       </div>
       <p class="muted tiny">${plural(db.list('foods').length, 'food')} · ${plural(db.list('recipes').length, 'recipe')} · ${plural(new Set(db.list('entries').map(e => e.date)).size, 'day')} logged</p>
     </section>
-    ${DEV ? `<section class="card dev-card"><h3>🛠️ Developer mode</h3><p class="muted small">This is the test version with sample data. Carly's app doesn't change until you push it.</p>
-      <button class="btn soft full" data-act="devLeave">Leave developer mode</button></section>` : ''}
+    ${DEV ? `<section class="card dev-card"><h3>🛠️ Developer mode</h3><p class="muted small">Test version with sample data. Carly's app doesn't change until you say push. Tap any change to see it.</p>
+      <div class="whatsnew">${WHATS_NEW.map(([k, t, d], i) => `<button class="wn" data-act="devShow" data-k="${k}"><span class="wn-n">${i + 1}</span><span class="grow"><b>${t}</b><span class="muted tiny">${d}</span></span><span class="chev">›</span></button>`).join('')}</div>
+      <button class="btn soft full mt" data-act="devLeave">Leave developer mode</button></section>` : ''}
     <button class="ver" data-act="verTap">Pulse ${APP_VERSION}${DEV ? ' · dev' : ''}</button>
 
 
@@ -2071,6 +2419,26 @@ const acts = {
   editEntry: d => editEntry(d.id),
   copyMeal: d => copyMeal(d.meal),
   water: d => addWater(+d.oz),
+  waterAmt: () => openWater(),
+  schedule: () => go('plan'),
+  planWeek: d => { ui.planWeek = +d.n ? (ui.planWeek || 0) + +d.n : 0; render(); },
+  planDay: d => openDay(d.d),
+  foodView: d => { ui.foodView = d.v; render(); },
+  cafLog: () => openCaf(),
+  qgo: d => quickGo(d.k),
+  updateTour: () => showUpdate(true),
+  ppHide: d => { try { localStorage.setItem('pulsePPHidden', JSON.stringify([...ppHidden(), d.k])); } catch {} render(); },
+  eventEdit: d => openEvent(d.id || null),
+  todoEdit: d => openTodo(d.id || null),
+  todoDone: (d, el) => toggleTodo(d.id, el),
+  games: () => openGames(),
+  calLinks: () => openCalLinks(),
+  brickStart: () => { if (!brickNow()) { db.put('brick', { id: uid(), start: Date.now(), end: null }); buzz(); toast('Bricked. Timer started'); } },
+  brickStop: () => { const b = brickNow(); if (b) { db.put('brick', { ...b, end: Date.now() }); toast(`Unbricked · ${dur(brickMin(b))} bricked`); } },
+  brickLog: () => openBrickLog(),
+  injuryLog: d => openInjury(d.id || null),
+  nudge: d => showNudge(d.k),
+  devShow: d => devShow(d.k),
   body: () => openBody(ui.date),
   gut: () => openGut({ date: ui.date }),
   editGut: d => openGut({ ep: db.get('stomach', d.id) }),
@@ -2111,6 +2479,7 @@ const acts = {
   healthPaste: () => healthPaste(),
   healthGuide: () => openHealthGuide(),
   toggle: d => saveProfile({ [d.k]: !(profile()?.[d.k] ?? d.def === '1') }),
+  toggleAll: () => { const on = !allNotifsOn(); saveProfile(Object.fromEntries(shownNotifs().map(n => [n[0], on]))); toast(on ? 'All reminders on' : 'All reminders off'); },
   trackTog: d => saveProfile({ track: { ...(profile()?.track || {}), [d.k]: !tracks(d.k) } }),
   period: d => setPeriod(d.f),
   periodFeel: d => togglePeriodFeel(d.k),
@@ -2138,7 +2507,10 @@ const acts = {
   getIdeas: () => getIdeas(),
   gameTip: () => { ui.gameTip = !ui.gameTip; buzz(); queueRender(); },
   wrapped: d => openWrapped(d.from || addDays(dateStr(), -7), d.to || addDays(dateStr(), -1)),
-  jump: d => { const el = $('.card.' + d.to); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } },
+  jump: d => {
+    go(['meal', 'water'].includes(d.to) ? 'food' : 'body');
+    requestAnimationFrame(() => { const el = $('.card.' + d.to); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } });
+  },
 };
 const inputs = {
   foodQ: el => { ui.foodQ = el.value; $('#foodList').innerHTML = foodListHTML(); },
@@ -2169,7 +2541,7 @@ document.addEventListener('change', e => {
 
 // Swipe left/right on Today to change days.
 let touch = null;
-main.addEventListener('touchstart', e => { if (ui.tab === 'today' && e.touches.length === 1) touch = [e.touches[0].clientX, e.touches[0].clientY]; }, { passive: true });
+main.addEventListener('touchstart', e => { if ((ui.tab === 'today' || ui.tab === 'body' || (ui.tab === 'food' && (ui.foodView || 'log') === 'log')) && e.touches.length === 1) touch = [e.touches[0].clientX, e.touches[0].clientY]; }, { passive: true });
 main.addEventListener('touchend', e => {
   if (!touch) return;
   const dx = e.changedTouches[0].clientX - touch[0], dy = e.changedTouches[0].clientY - touch[1];
@@ -2266,9 +2638,9 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
     }
     const preps = mode === 'log' && !q && tab === 'recent' ? activePreps() : [];
     s.$('#plist').innerHTML = (preps.length ? `<h4 class="sec">🥡 From your meal prep</h4>${preps.map(p => `<button class="row" data-x="prep" data-id="${p.id}">
-        ${thumb(p.photo, '🥡')}<div class="row-main"><div class="row-name">${esc(p.name)}</div><div class="row-sub">1 container · ${fmt(prepMacros(p).cal)} cal · ${fmt(p.left)} left</div></div><span class="row-plus">＋</span></button>`).join('')}<h4 class="sec">Recent</h4>` : '')
+        ${thumb(p.photo, foodEmoji(p.name, '🥡'))}<div class="row-main"><div class="row-name">${esc(p.name)}</div><div class="row-sub">1 container · ${fmt(prepMacros(p).cal)} cal · ${fmt(p.left)} left</div></div><span class="row-plus">＋</span></button>`).join('')}<h4 class="sec">Recent</h4>` : '')
       + (rows.length ? rows.map(([k, o, sub]) => `<button class="row" data-x="pick" data-k="${k}" data-id="${o.id}">
-        ${thumb(o.photo, k === 'recipe' ? '🍲' : '🥣')}<div class="row-main"><div class="row-name">${esc(o.name)}${o.fav ? ' <span class="star">★</span>' : ''}${gfBadge(k, o)}</div><div class="row-sub">${sub}</div></div><span class="row-plus">＋</span></button>`).join('')
+        ${thumb(o.photo, foodEmoji(o.name, k === 'recipe' ? '🍲' : '🥣'))}<div class="row-main"><div class="row-name">${esc(o.name)}${o.fav ? ' <span class="star">★</span>' : ''}${gfBadge(k, o)}</div><div class="row-sub">${sub}</div></div><span class="row-plus">＋</span></button>`).join('')
       : `<div class="empty small"><p>${q ? `Nothing saved called “${esc(q)}”.` : tab === 'recipes' ? 'No recipes yet.' : 'No saved foods yet.'}</p>
          <button class="btn primary" data-x="new">📷 Add it from the label</button>${q ? `<button class="btn soft" data-x="online">🔎 Search online for “${esc(q)}”</button>` : ''}</div>`);
   }
@@ -2323,7 +2695,7 @@ function openAmount({ item, entry = null, prep = null, meal, date, onAdded }) {
   const sus = entry ? null : gutSuspects().get(item.kind + ':' + item.id);
   const s = openSheet({
     title: entry ? 'Edit entry' : prep ? 'How much?' : 'How many grams?',
-    body: `<div class="amt-food">${thumb(item.photo, item.kind === 'recipe' ? '🍲' : '🥣')}<div><div class="amt-name">${esc(item.name)}</div><div class="muted small">${esc(item.brand || '')}</div></div></div>
+    body: `<div class="amt-food">${thumb(item.photo, foodEmoji(item.name, item.kind === 'recipe' ? '🍲' : '🥣'))}<div><div class="amt-name">${esc(item.name)}</div><div class="muted small">${esc(item.brand || '')}</div></div></div>
       ${gfWarning(item.kind, item.kind === 'food' ? getFood(item.id) : db.get('recipes', item.id))}
       ${sus ? `<p class="tip">⚠️ Heads up: stomach trouble followed this ${sus.hit} of the ${sus.eaten} times you had it.</p>` : ''}
       <div class="amt-input"><input id="amt" type="text" inputmode="decimal" value="${startG === '' ? '' : fmtIn(unit === 'pc' ? entry.pcs : startG)}" placeholder="0" autocomplete="off" aria-label="Amount">
@@ -2406,6 +2778,7 @@ function openQuick({ entry = null, meal = defaultMeal(), date = ui.date }) {
         <div class="field"><label>Protein (g)</label><input id="qp" inputmode="decimal" value="${fmtIn(m.p)}"></div>
         <div class="field"><label>Carbs (g)</label><input id="qc" inputmode="decimal" value="${fmtIn(m.c)}"></div>
         <div class="field"><label>Fat (g)</label><input id="qf" inputmode="decimal" value="${fmtIn(m.f)}"></div>
+        <div class="field"><label>Caffeine (mg)</label><input id="qcaf" inputmode="decimal" value="${fmtIn(m.caf)}" placeholder="optional"></div>
       </div>
       <div class="field"><label>Meal</label><div class="chips">${MEALS.map(x => `<button class="chip ${x.id === curMeal ? 'on' : ''}" data-x="meal" data-m="${x.id}">${x.icon} ${x.name}</button>`).join('')}</div></div>`,
     footer: `${entry ? `<button class="btn ghost danger-t" data-x="del">Delete</button>` : ''}<button class="btn primary grow" data-x="save">${entry ? 'Save' : 'Add'}</button>`,
@@ -2414,10 +2787,11 @@ function openQuick({ entry = null, meal = defaultMeal(), date = ui.date }) {
   s.on('click', '[data-x="del"]', () => { db.remove('entries', entry.id); s.close(); });
   s.on('click', '[data-x="save"]', () => {
     let p = num(s.$('#qp').value), c = num(s.$('#qc').value), f = num(s.$('#qf').value), cal = num(s.$('#qcal').value);
+    const caf = num(s.$('#qcaf').value);
     if (!cal) cal = p * 4 + c * 4 + f * 9;
-    if (!cal) return toast('Add at least calories');
+    if (!cal && !caf) return toast('Add at least calories');
     const e = entry ? { ...entry } : { id: uid(), date, kind: 'quick', time: defaultTime(date, curMeal) };
-    Object.assign(e, { name: s.$('#qn').value.trim() || 'Quick add', grams: null, meal: curMeal, macros: { cal, p, c, f, fiber: 0, sugar: 0, sodium: 0 } });
+    Object.assign(e, { name: s.$('#qn').value.trim() || 'Quick add', grams: null, meal: curMeal, macros: { cal, p, c, f, fiber: 0, sugar: 0, sodium: 0, caf } });
     db.put('entries', e);
     s.close();
     toast(entry ? 'Saved' : `Added · ${fmt(cal)} cal`);
@@ -2494,7 +2868,7 @@ function openFoodForm({ food = null, prefill = {}, onSaved } = {}) {
         ${fld('servingG', 'Serving size *', 'g', '28')}
         <div class="field"><label for="ff-sl">Serving name</label><input id="ff-sl" data-t="servingLabel" value="${esc(f.servingLabel || '')}" placeholder="1 cup, 2 tbsp"></div>
         ${fld('cal', 'Calories *', 'cal')}${fld('p', 'Protein', 'g')}${fld('c', 'Total carbs', 'g')}${fld('f', 'Total fat', 'g')}
-        ${fld('fiber', 'Fiber', 'g')}${fld('sugar', 'Total sugars', 'g')}${fld('sodium', 'Sodium', 'mg')}
+        ${fld('fiber', 'Fiber', 'g')}${fld('sugar', 'Total sugars', 'g')}${fld('sodium', 'Sodium', 'mg')}${fld('caf', 'Caffeine', 'mg', '0')}
       </div>
       <div class="calc-hint" id="hint"></div>
       <div class="field"><label for="ff-pieces">Pieces per serving <span class="muted">— optional, for things you count</span></label><div class="unit-in"><input id="ff-pieces" data-k="pieces" inputmode="decimal" value="${esc(f.pieces ?? '')}" placeholder="${pieceInfo(f) ? fmt(pieceInfo(f).n) + ' (from the serving name)' : 'e.g. 13'}"><span>pcs</span></div></div>
@@ -2563,6 +2937,7 @@ function openFoodForm({ food = null, prefill = {}, onSaved } = {}) {
   s.on('click', '[data-x="save"]', () => {
     s.$$('[data-t]').forEach(i => { f[i.dataset.t] = i.value.trim(); });
     s.$$('[data-k]').forEach(i => { f[i.dataset.k] = optNum(i.value) ?? ''; });
+    if (num(f.caf) > 0) tags.add('Caffeine');
     f.tags = [...tags];
     f.gf = gfSel;
     f.fav = s.$('#ff-fav').checked;
@@ -3007,7 +3382,7 @@ function openCalendar() {
     body: `<div class="cal-nav"><button class="icon-btn" data-x="prev" aria-label="Previous month">‹</button><b id="calTitle"></b><button class="icon-btn" data-x="next" aria-label="Next month">›</button></div>
       <div class="cal-grid cal-wd">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(d => `<span>${d}</span>`).join('')}</div>
       <div class="cal-grid" id="calGrid"></div>
-      <div class="cal-legend"><span><i class="lg on"></i>On target</span><span><i class="lg under"></i>Under</span><span><i class="lg over"></i>Over</span><span><i class="mk gut"></i>Stomach</span><span><i class="mk feel"></i>Felt off</span><span><i class="mk sleep"></i>Recovery logged</span>${periodOn() ? '<span><i class="mk period"></i>Period</span>' : ''}<span>🏀 Practice</span><span>🎯 Shoot-around</span><span>🏋️ Weights</span><span>💪 Workout</span><span><i class="lg game"></i>Game</span></div>
+      <div class="cal-legend"><span><i class="lg on"></i>On target</span><span><i class="lg under"></i>Under</span><span><i class="lg over"></i>Over</span><span><i class="mk gut"></i>Stomach</span><span><i class="mk feel"></i>Felt off</span><span><i class="mk sleep"></i>Recovery logged</span>${periodOn() ? '<span><i class="mk period"></i>Period</span>' : ''}<span><i class="mk due"></i>Something due</span><span>🏀 Practice</span><span>🎯 Shoot-around</span><span>🏋️ Weights</span><span>💪 Workout</span><span><i class="lg game"></i>Game</span></div>
       <div id="calSum"></div>
       <div id="calGames"></div>`,
   });
@@ -3032,7 +3407,7 @@ function openCalendar() {
       const gm = gameOn(ds), acts = actsOf(day);
       cells += `<button class="cal-day ${cls} ${ds === today ? 'today' : ''} ${ds === ui.date ? 'sel' : ''} ${ds > today ? 'future' : ''} ${gm ? 'game' : ''}" data-x="day" data-d="${ds}">
         <span class="cal-n">${d}</span>${gm ? `<img class="cal-logo" src="${teamLogo(gm)}" alt="${esc(gm.opp)}">` : ''}<span class="cal-c">${t ? (t.cal >= 1000 ? (t.cal / 1000).toFixed(1) + 'k' : Math.round(t.cal)) : gm ? '' : acts.includes('practice') ? '🏀' : acts.includes('weights') ? '🏋️' : acts.includes('workout') ? '💪' : acts.includes('shoot') ? '🎯' : ''}</span>
-        <span class="cal-mk">${eps[ds] ? '<i class="mk gut"></i>' : ''}${offs.has(ds) ? '<i class="mk feel"></i>' : ''}${day && (day.sleepMin != null || day.recovery != null) ? '<i class="mk sleep"></i>' : ''}${day?.period && periodOn() ? '<i class="mk period"></i>' : ''}</span></button>`;
+        <span class="cal-mk">${eps[ds] ? '<i class="mk gut"></i>' : ''}${offs.has(ds) ? '<i class="mk feel"></i>' : ''}${day && (day.sleepMin != null || day.recovery != null) ? '<i class="mk sleep"></i>' : ''}${day?.period && periodOn() ? '<i class="mk period"></i>' : ''}${todosDue(ds).some(x => !x.done) ? '<i class="mk due"></i>' : ''}</span></button>`;
     }
     s.$('#calGrid').innerHTML = cells;
     const avg = k => logged.length ? logged.reduce((a, t) => a + t[k], 0) / logged.length : 0;
@@ -3043,12 +3418,12 @@ function openCalendar() {
     const gms = GAMES.filter(g => g.date.startsWith(month));
     s.$('#calGames').innerHTML = gms.length ? `<h4 class="sec">🏀 Games this month</h4>${gms.map(g => `<button class="row" data-x="day" data-d="${g.date}">
       <img class="team-logo sm" src="${teamLogo(g)}" alt=""><div class="row-main"><div class="row-name">${vsAt(g)} ${esc(g.opp)}</div>
-      <div class="row-sub">${parseDate(g.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · ${g.result ? esc(g.result) : gameTime(g)}${g.home ? ' · Home' : ' · ' + esc(g.where)}</div></div><span class="chev">›</span></button>`).join('')}` : '';
+      <div class="row-sub">${parseDate(g.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · ${g.result ? esc(g.result) : g.postponed ? 'Postponed' : gameTime(g)}${g.home ? ' · Home' : ' · ' + esc(g.where)}</div></div><span class="chev">›</span></button>`).join('')}` : '';
   }
   const shift = n => { const d = parseDate(month + '-01'); d.setMonth(d.getMonth() + n); month = dateStr(d).slice(0, 7); draw(); };
   s.on('click', '[data-x="prev"]', () => shift(-1));
   s.on('click', '[data-x="next"]', () => shift(1));
-  s.on('click', '[data-x="day"]', el => { s.close(); ui.date = el.dataset.d; go('today'); });
+  s.on('click', '[data-x="day"]', el => openDay(el.dataset.d));
   draw();
 }
 
@@ -3353,6 +3728,7 @@ async function afterLogin(user) {
 function openFromNote(what) { if (what === 'wrapped') setTimeout(() => acts.wrapped({}), 700); }
 navigator.serviceWorker?.addEventListener('message', e => openFromNote(e.data?.open));
 function startApp({ first = false } = {}) {
+  applySchedule();
   applyTheme();
   appEl.classList.add('ready');
   render();
@@ -3364,9 +3740,517 @@ function startApp({ first = false } = {}) {
   notify.clearStale(handledNotes());
   if (DEMO && new URLSearchParams(location.search).has('win')) setTimeout(() => acts.winPreview(), 2200);
   if (new URLSearchParams(location.search).get('open') === 'wrapped') { openFromNote('wrapped'); history.replaceState(null, '', location.pathname); }
-  notify.isOn().then(on => { ui.notifyOn = on; if (ui.tab === 'me') queueRender(); });
+  notify.isOn().then(on => {
+    ui.notifyOn = on;
+    if (ui.tab === 'me') queueRender();
+    let due = false;
+    try { due = tourDue(); } catch {}
+    if (!quiet && !first && !due) setTimeout(() => updateDue() ? showUpdate() : maybeNudge(), 2600);
+  });
   refreshResults();
+  syncCals();
+  pullBrick();
   scheduleNotify();
+}
+
+// ---------- games list (editable) ----------
+const ppHidden = () => { try { return JSON.parse(localStorage.getItem('pulsePPHidden') || '[]'); } catch { return []; } };
+function openGames() {
+  const t = dateStr();
+  const s = openSheet({
+    title: '🏀 Games', full: true,
+    body: `<p class="muted small">Updates on its own when the Pilots move or postpone a game. Tap one to change it yourself.</p><div id="gl"></div>`,
+  });
+  const draw = () => {
+    s.$('#gl').innerHTML = GAMES.map(g => `<button class="row ${g.date < t ? 'past' : ''}" data-x="g" data-k="${esc(g.key)}"><img class="team-logo sm" src="${teamLogo(g)}" alt="">
+      <div class="row-main"><div class="row-name">${vsAt(g)} ${esc(g.opp)}${g.edited ? ' <span class="muted tiny">· edited</span>' : ''}</div>
+      <div class="row-sub">${parseDate(g.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} · ${g.result ? esc(g.result) : g.postponed ? '<b class="warn-t">Postponed</b>' : gameTime(g)}</div></div><span class="chev">›</span></button>`).join('');
+  };
+  s.on('click', '[data-x="g"]', el => openGameEdit(el.dataset.k, draw));
+  draw();
+}
+function openGameEdit(key, done) {
+  const g = GAMES.find(x => x.key === key);
+  if (!g) return;
+  const s = openSheet({
+    title: `${vsAt(g)} ${g.opp}`,
+    body: `<div class="grid2"><div class="field"><label>Date</label><input type="date" id="gd" value="${g.date}"></div>
+      <div class="field"><label>Tip-off (your time)</label><input type="time" id="gt" value="${g.time || ''}"></div></div>
+      <div class="field"><label>Venue</label><input id="gv" value="${esc(g.venue || '')}" placeholder="${esc(g.where || '')}"></div>
+      <label class="check"><input type="checkbox" id="gp" ${g.postponed ? 'checked' : ''}> Postponed (no new date yet)</label>
+      ${g.edited ? `<button class="btn ghost full" data-x="reset">Undo my changes</button>` : ''}`,
+    footer: `<button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  const put = e => { const all = { ...(profile()?.gameEdits || {}) }; if (e) all[key] = e; else delete all[key]; saveProfile({ gameEdits: all }); applySchedule(); scheduleNotify(); s.close(); done?.(); };
+  s.on('click', '[data-x="reset"]', () => put(null));
+  s.on('click', '[data-x="save"]', () => put({ date: s.$('#gd').value || g.date, time: s.$('#gt').value || null, venue: s.$('#gv').value.trim(), postponed: s.$('#gp').checked }));
+}
+
+// ---------- schedule: linked calendars + her own events + to-dos ----------
+const p2 = n => String(n).padStart(2, '0');
+// Wall-clock time in a named zone -> a real Date (same trick as ptToLocal).
+function zonedDate(y, mo, d, h, mi, tz) {
+  const guess = Date.UTC(y, mo - 1, d, h, mi);
+  try {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }).formatToParts(new Date(guess)).map(x => [x.type, +x.value]));
+    return new Date(guess - (Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - guess));
+  } catch { return new Date(y, mo - 1, d, h, mi); }
+}
+function icsWhen(f) {
+  const m = f?.v.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})\d{0,2}(Z)?)?/);
+  if (!m) return null;
+  if (!m[4]) return { date: `${m[1]}-${m[2]}-${m[3]}`, time: null };
+  const tz = (f.p.match(/TZID=([^;:]+)/) || [])[1];
+  const d = m[6] ? new Date(Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5])) : tz ? zonedDate(+m[1], +m[2], +m[3], +m[4], +m[5], tz) : new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5]);
+  return { date: dateStr(d), time: `${p2(d.getHours())}:${p2(d.getMinutes())}` };
+}
+const icsText = v => String(v || '').replace(/\\n/gi, ' ').replace(/\\([,;\\])/g, '$1').trim();
+// Reads an .ics file into events between two dates, repeating ones included.
+function parseICS(text, from, to) {
+  const out = [];
+  let ev = null;
+  for (const l of text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/)) {
+    if (l === 'BEGIN:VEVENT') ev = { ex: new Set() };
+    else if (l === 'END:VEVENT') { if (ev) out.push(...icsExpand(ev, from, to)); ev = null; }
+    else if (ev) {
+      const i = l.indexOf(':');
+      if (i < 0) continue;
+      const [name, ...ps] = l.slice(0, i).split(';'), f = { v: l.slice(i + 1), p: ps.join(';') };
+      if (name === 'EXDATE') f.v.split(',').forEach(v => { const w = icsWhen({ v, p: f.p }); if (w) ev.ex.add(w.date); });
+      else ev[name] = f;
+    }
+  }
+  return out;
+}
+function icsExpand(ev, from, to) {
+  const st = icsWhen(ev.DTSTART);
+  if (!st || ev.STATUS?.v === 'CANCELLED') return [];
+  const en = icsWhen(ev.DTEND);
+  const base = { uid: ev.UID?.v || uid(), title: icsText(ev.SUMMARY?.v) || 'Event', where: icsText(ev.LOCATION?.v), start: st.time, end: en && en.date === st.date ? en.time : null };
+  const one = d => ({ ...base, id: base.uid + '@' + d, date: d });
+  const rr = ev.RRULE?.v;
+  if (!rr) return st.date >= from && st.date <= to ? [one(st.date)] : [];
+  const r = Object.fromEntries(rr.split(';').map(x => x.split('=')));
+  const iv = +(r.INTERVAL || 1), until = r.UNTIL ? icsWhen({ v: r.UNTIL, p: '' })?.date || '9999' : '9999', count = +(r.COUNT || 0);
+  const by = r.BYDAY ? r.BYDAY.split(',').map(x => ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'].indexOf(x.slice(-2))) : null;
+  const out = [], s0 = parseDate(st.date);
+  let n = 0;
+  for (let d = st.date < addDays(from, -800) ? addDays(from, -800) : st.date; d <= to && d <= until; d = addDays(d, 1)) {
+    const diff = Math.round((parseDate(d) - s0) / 864e5), dow = parseDate(d).getDay();
+    const hit = r.FREQ === 'DAILY' ? diff % iv === 0
+      : r.FREQ === 'WEEKLY' ? (by ? by.includes(dow) : dow === s0.getDay()) && Math.floor((diff + s0.getDay()) / 7) % iv === 0
+      : r.FREQ === 'MONTHLY' ? d.slice(8) === st.date.slice(8) : d === st.date;
+    if (!hit) continue;
+    if (count && ++n > count) break;
+    if (d >= from && !ev.ex.has(d)) out.push(one(d));
+  }
+  return out;
+}
+const calLinks = () => profile()?.calLinks || [];
+const calCache = id => { try { return JSON.parse(localStorage.getItem('pulseCal-' + id) || 'null'); } catch { return null; } };
+async function syncCal(link, force = false) {
+  const c = calCache(link.id);
+  if (!force && c && Date.now() - c.at < 3600e3) return c;
+  const r = await fetch(CONFIG_PUSH() + '/ics?url=' + encodeURIComponent(link.url));
+  if (!r.ok) throw new Error(r.status === 422 ? "That link isn't a calendar" : "Couldn't reach that calendar");
+  const t = dateStr(), events = parseICS(await r.text(), addDays(t, -30), addDays(t, 120)).map(e => ({ ...e, src: link.id }));
+  const out = { at: Date.now(), events };
+  try { localStorage.setItem('pulseCal-' + link.id, JSON.stringify(out)); } catch {}
+  return out;
+}
+async function syncCals(force = false) {
+  const before = JSON.stringify(calLinks().map(l => calCache(l.id)?.at));
+  await Promise.allSettled(calLinks().map(l => syncCal(l, force)));
+  if (JSON.stringify(calLinks().map(l => calCache(l.id)?.at)) !== before) queueRender();
+}
+// Everything on a day: linked events (minus ones she edited or hid) plus her own.
+function eventsOn(date) {
+  const own = db.list('events'), gone = new Set(own.map(e => e.replaces).filter(Boolean));
+  const linked = calLinks().flatMap(l => (calCache(l.id)?.events || []).filter(e => e.date === date && !gone.has(e.id)).map(e => ({ ...e, cal: l.name })));
+  const g = gameOn(date), game = g && !g.result ? [{ id: 'game', date, start: g.time, title: `🏀 ${vsAt(g)} ${g.opp}`, where: g.venue || g.where, game: true }] : [];
+  return [...game, ...linked, ...own.filter(e => e.date === date && !e.deleted)].sort((a, b) => (a.start || '00:00').localeCompare(b.start || '00:00'));
+}
+const todosDue = date => db.list('todos').filter(t => t.due === date).sort((a, b) => (a.done - b.done) || (a.time || '99').localeCompare(b.time || '99'));
+const todosSoon = () => db.list('todos').filter(t => !t.done && t.due && t.due <= addDays(dateStr(), 3)).sort((a, b) => a.due.localeCompare(b.due) || (a.time || '99').localeCompare(b.time || '99'));
+const evTime = e => e.start ? fmtTime(e.start) + (e.end ? `<small>to ${fmtTime(e.end)}</small>` : '') : 'All day';
+const dueTxt = t => { const d = Math.round((parseDate(t.due) - parseDate(dateStr())) / 864e5); return (d < 0 ? 'Overdue' : d === 0 ? 'Today' : d === 1 ? 'Tomorrow' : parseDate(t.due).toLocaleDateString(undefined, { weekday: 'short' })) + (t.time ? ' ' + fmtTime(t.time) : ''); };
+function todoRow(t) {
+  return `<div class="todo ${t.done ? 'done' : ''}"><button class="todo-box" data-act="todoDone" data-id="${t.id}" aria-label="Done">${t.done ? '✓' : ''}</button>
+    <button class="todo-main" data-act="todoEdit" data-id="${t.id}"><b>${esc(t.title)}</b><span class="muted tiny">${[t.cls, t.due ? dueTxt(t) : ''].filter(Boolean).map(esc).join(' · ')}</span></button></div>`;
+}
+function findEvent(id) {
+  return db.get('events', id) || calLinks().flatMap(l => (calCache(l.id)?.events || []).map(e => ({ ...e, cal: l.name }))).find(e => e.id === id) || null;
+}
+// Her own events edit in place. A linked event can't change at the source, so
+// editing it saves her version here and hides the original.
+function openEvent(id, date = dateStr()) {
+  const e = id ? findEvent(id) : null, linked = e && !db.get('events', e.id);
+  const s = openSheet({
+    title: e ? 'Edit event' : 'New event',
+    body: `${linked ? `<p class="muted small">From ${esc(e.cal || 'a linked calendar')}. Changes here only change Pulse.</p>` : ''}
+      <div class="field"><label>What</label><input id="et" value="${esc(e?.title || '')}" placeholder="Practice, class, travel…" autocomplete="off"></div>
+      <div class="field"><label>Date</label><input type="date" id="ed" value="${e?.date || date}"></div>
+      <div class="grid2"><div class="field"><label>Starts</label><input type="time" id="es" value="${e?.start || ''}"></div>
+      <div class="field"><label>Ends</label><input type="time" id="ee" value="${e?.end || ''}"></div></div>
+      <div class="field"><label>Where</label><input id="ew" value="${esc(e?.where || '')}" placeholder="optional"></div>
+      <div class="chips">${['Practice', 'Lift', 'Class', 'Film', 'Travel', 'Treatment', 'Meeting'].map(x => `<button class="chip sm" data-x="q" data-t="${x}">${x}</button>`).join('')}</div>`,
+    footer: `${e ? `<button class="btn ghost danger-t" data-x="del">Delete</button>` : ''}<button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  s.on('click', '[data-x="q"]', el => { s.$('#et').value = el.dataset.t; });
+  s.on('click', '[data-x="del"]', () => {
+    if (linked) db.put('events', { id: uid(), replaces: e.id, deleted: true, date: e.date });
+    else db.remove('events', e.id);
+    s.close(); toast('Deleted');
+  });
+  s.on('click', '[data-x="save"]', () => {
+    const title = s.$('#et').value.trim();
+    if (!title) return toast('Give it a name');
+    const rec = { id: linked || !e ? uid() : e.id, title, date: s.$('#ed').value || date, start: s.$('#es').value || null, end: s.$('#ee').value || null, where: s.$('#ew').value.trim() };
+    if (linked) rec.replaces = e.id;
+    db.put('events', rec);
+    s.close(); toast('Saved');
+  });
+  if (!e) s.$('#et').focus();
+}
+function openTodo(id, date) {
+  const t = id ? db.get('todos', id) : null;
+  const classes = [...new Set(db.list('todos').map(x => x.cls).filter(Boolean))].slice(0, 6);
+  const s = openSheet({
+    title: t ? 'Edit to-do' : 'New to-do',
+    body: `<div class="field"><label>What's due</label><input id="tt" value="${esc(t?.title || '')}" placeholder="Bio lab report" autocomplete="off"></div>
+      <div class="grid2"><div class="field"><label>Due</label><input type="date" id="tdd" value="${t?.due || date || addDays(dateStr(), 1)}"></div>
+      <div class="field"><label>Time</label><input type="time" id="ttm" value="${t?.time || ''}"></div></div>
+      <div class="field"><label>Class</label><input id="tc" value="${esc(t?.cls || '')}" placeholder="optional" autocomplete="off"></div>
+      ${classes.length ? `<div class="chips">${classes.map(c => `<button class="chip sm" data-x="c" data-c="${esc(c)}">${esc(c)}</button>`).join('')}</div>` : ''}`,
+    footer: `${t ? `<button class="btn ghost danger-t" data-x="del">Delete</button>` : ''}<button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  s.on('click', '[data-x="c"]', el => { s.$('#tc').value = el.dataset.c; });
+  s.on('click', '[data-x="del"]', () => { db.remove('todos', t.id); s.close(); toast('Deleted'); });
+  s.on('click', '[data-x="save"]', () => {
+    const title = s.$('#tt').value.trim();
+    if (!title) return toast("Type what's due");
+    db.put('todos', { ...(t || { id: uid(), done: false }), title, due: s.$('#tdd').value || null, time: s.$('#ttm').value || null, cls: s.$('#tc').value.trim() });
+    s.close(); toast('Saved');
+  });
+  if (!t) s.$('#tt').focus();
+}
+function toggleTodo(id, el) {
+  const t = db.get('todos', id);
+  if (!t) return;
+  if (!t.done && el) { sparkle(el); el.classList.add('pop'); }
+  // A beat for the check to land before the list redraws.
+  setTimeout(() => db.put('todos', { ...t, done: !t.done, doneAt: t.done ? null : Date.now() }), t.done ? 0 : 260);
+  if (!t.done) buzz();
+}
+// A small burst from a button: the quick "done" feeling, without full confetti.
+function sparkle(el) {
+  const r = el.getBoundingClientRect(), cols = ['#7b5cd6', '#b9a4f5', '#ffd166', '#06d6a0', '#ef476f'];
+  for (let i = 0; i < 12; i++) {
+    const p = document.createElement('i'), a = (i / 12) * Math.PI * 2, dist = 26 + Math.random() * 18;
+    p.className = 'spark';
+    p.style.cssText = `left:${r.left + r.width / 2}px;top:${r.top + r.height / 2}px;background:${cols[i % cols.length]};--dx:${Math.cos(a) * dist}px;--dy:${Math.sin(a) * dist}px`;
+    document.body.appendChild(p);
+    setTimeout(() => p.remove(), 650);
+  }
+}
+function openCalLinks() {
+  const s = openSheet({
+    title: '🔗 Linked calendars', full: true,
+    body: `<p class="small">Paste a calendar link once and Pulse keeps it up to date. Works with:</p>
+      <ul class="hs small"><li><b>Teamworks:</b> Calendar → Sync / Subscribe → copy the link</li>
+        <li><b>Google Calendar</b> (on a computer): Settings → your calendar → <i>Secret address in iCal format</i></li>
+        <li><b>iPhone/iCloud:</b> Calendar app → Calendars → ⓘ next to one → Public Calendar → Share Link</li>
+        <li><b>Canvas/Moodle:</b> Calendar → Calendar feed / Export → copy the link</li></ul>
+      <div id="ll"></div>
+      <div class="field mt"><label>Name</label><input id="ln" placeholder="Teamworks" autocomplete="off"></div>
+      <div class="field"><label>Calendar link</label><input id="lu" placeholder="https://… or webcal://…" autocomplete="off" inputmode="url"></div>
+      <button class="btn primary full" data-x="add">Link calendar</button>
+      <p class="muted tiny mt">Didn't work? You can always add events by hand with ＋ Event.</p>`,
+  });
+  const draw = () => {
+    s.$('#ll').innerHTML = calLinks().map(l => { const c = calCache(l.id); return `<div class="kv-row"><span><b>${esc(l.name)}</b><div class="muted tiny">${c ? `${c.events.length} events · updated ${new Date(c.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : 'Not loaded yet'}</div></span>
+      <span><button class="link" data-x="sync" data-id="${l.id}">Refresh</button> <button class="link danger-t" data-x="rm" data-id="${l.id}">Remove</button></span></div>`; }).join('');
+  };
+  s.on('click', '[data-x="add"]', async () => {
+    const url = s.$('#lu').value.trim(), name = s.$('#ln').value.trim() || 'Calendar';
+    if (!/^(https?|webcals?):\/\//i.test(url)) return toast('Paste the full link');
+    const link = { id: uid(), name, url };
+    const b = s.$('[data-x="add"]'); b.disabled = true; b.textContent = 'Checking…';
+    try { const c = await syncCal(link, true); saveProfile({ calLinks: [...calLinks(), link] }); s.$('#lu').value = ''; s.$('#ln').value = ''; toast(`Linked · ${c.events.length} events`); queueRender(); }
+    catch (e) { toast(e.message); }
+    b.disabled = false; b.textContent = 'Link calendar'; draw();
+  });
+  s.on('click', '[data-x="sync"]', async el => { const l = calLinks().find(x => x.id === el.dataset.id); try { await syncCal(l, true); toast('Updated'); } catch (e) { toast(e.message); } draw(); queueRender(); });
+  s.on('click', '[data-x="rm"]', el => { saveProfile({ calLinks: calLinks().filter(x => x.id !== el.dataset.id) }); try { localStorage.removeItem('pulseCal-' + el.dataset.id); } catch {} draw(); queueRender(); });
+  draw();
+}
+
+// ---------- Brick (phone blocked) ----------
+const brickNow = () => db.list('brick').find(b => !b.end);
+const dur = m => m < 60 ? `${Math.round(m)}m` : fmtSleep(m);
+const brickMin = (b, from = 0, to = Infinity) => Math.max(0, Math.min(b.end || Date.now(), to) - Math.max(b.start, from)) / 60e3;
+const dayBounds = d => [new Date(d + 'T00:00').getTime(), new Date(addDays(d, 1) + 'T00:00').getTime()];
+const brickOn = d => { const [a, z] = dayBounds(d); return db.list('brick').reduce((s, b) => s + brickMin(b, a, z), 0); };
+function brickRow(d) {
+  if (d !== dateStr()) return '';
+  const on = brickNow(), today = brickOn(d);
+  return `<section class="card brick-card"><div class="brick-row">
+    <span class="brick-ico">${BRICK}</span>
+    <div class="grow">${on ? `<b>Bricked now</b><div class="muted small">${dur(brickMin(on))} so far${today > brickMin(on) + 1 ? ` · ${dur(today)} today` : ''}</div>`
+      : `<b>Phone brick</b><div class="muted small">${today >= 1 ? `${dur(today)} today` : 'Not today yet'}</div>`}</div>
+    ${on ? `<button class="btn primary" data-act="brickStop">Unbrick</button>` : `<button class="btn soft" data-act="brickLog">Log time</button><button class="btn primary" data-act="brickStart">Start</button>`}
+  </div></section>`;
+}
+function openBrickLog() {
+  const s = openSheet({
+    title: 'Log Brick time',
+    body: `<div class="chips">${[30, 60, 90, 120, 180, 240].map(m => `<button class="chip" data-x="m" data-m="${m}">${dur(m)}</button>`).join('')}</div>
+      <div class="grid2 mt"><div class="field"><label>Hours</label><input id="bh" inputmode="decimal" placeholder="0"></div><div class="field"><label>Ended at</label><input type="time" id="be" value="${timeStr()}"></div></div>
+      <button class="link muted small" data-x="setup">Log it on its own with a Shortcut</button>`,
+    footer: `<button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  s.on('click', '[data-x="m"]', el => { s.$('#bh').value = fmtIn(+el.dataset.m / 60); });
+  s.on('click', '[data-x="setup"]', () => { s.close(); openBrickSetup(); });
+  s.on('click', '[data-x="save"]', () => {
+    const mins = num(s.$('#bh').value) * 60;
+    if (!(mins > 0)) return toast('Pick how long');
+    const end = new Date(dateStr() + 'T' + (s.$('#be').value || timeStr())).getTime();
+    db.put('brick', { id: uid(), start: end - mins * 60e3, end });
+    s.close(); toast(`${dur(mins)} of Brick logged`);
+  });
+}
+// Optional: an iPhone Shortcut posts start/stop to the push server, and the
+// app collects them when it opens.
+function openBrickSetup() {
+  if (!profile()?.brickKey) saveProfile({ brickKey: Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(36).padStart(2, '0')).join('').slice(0, 24) });
+  const key = profile().brickKey, base = CONFIG_PUSH() + '/brick?key=' + key + '&action=';
+  const s = openSheet({
+    title: 'Brick on its own', full: true,
+    body: `<p class="small">Brick doesn't share its data, but an iPhone Shortcut can tell Pulse when you brick and unbrick. Optional, and you can still log by hand.</p>
+      <ol class="hs small"><li>Open <b>Shortcuts</b> → <b>＋</b> → add <b>Get Contents of URL</b>.</li>
+        <li>Paste the <b>Start</b> link below, tap ▸ next to it, and set Method to <b>POST</b>. Name it "Brick start".</li>
+        <li>Make a second one with the <b>Stop</b> link, named "Brick stop".</li>
+        <li>Run them from Automation (for example when a Focus turns on and off, or when you open Brick), or from your Home Screen.</li></ol>
+      <div class="field"><label>Start link</label><div class="copy-row"><input readonly value="${esc(base)}start"><button class="btn soft" data-x="copy" data-v="${esc(base)}start">Copy</button></div></div>
+      <div class="field"><label>Stop link</label><div class="copy-row"><input readonly value="${esc(base)}stop"><button class="btn soft" data-x="copy" data-v="${esc(base)}stop">Copy</button></div></div>
+      <p class="muted tiny">These links only work for your phone. Pulse picks up the times next time you open it.</p>`,
+  });
+  s.on('click', '[data-x="copy"]', async el => { try { await navigator.clipboard.writeText(el.dataset.v); toast('Copied'); } catch { toast('Press and hold the link to copy'); } });
+}
+async function pullBrick() {
+  const key = profile()?.brickKey;
+  if (!key || DEMO) return;
+  try {
+    const list = await (await fetch(CONFIG_PUSH() + '/brick?key=' + key)).json();
+    if (!Array.isArray(list)) return;
+    const seen = new Set(db.list('brick').map(b => b.extStart).filter(Boolean));
+    let open = brickNow();
+    for (const e of list.sort((a, b) => a.at - b.at)) {
+      if (e.action === 'start' && !seen.has(e.at) && !open) { open = { id: uid(), start: e.at, end: null, extStart: e.at }; db.put('brick', open); seen.add(e.at); }
+      else if (e.action === 'stop' && open && e.at > open.start) { db.put('brick', { ...open, end: e.at }); open = null; }
+    }
+  } catch {}
+}
+function brickTrends(dates) {
+  const mins = dates.map(brickOn), on = mins.filter(m => m >= 1);
+  if (!on.length && !db.list('brick').length) return '';
+  // Next-night sleep after days she bricked 2h+ vs days she didn't.
+  const sl = dates.map(d => ({ m: brickOn(d), s: db.get('days', addDays(d, 1))?.sleepMin })).filter(x => x.s != null);
+  const avgOf = l => l.length ? l.reduce((a, x) => a + x.s, 0) / l.length : null;
+  const yes = avgOf(sl.filter(x => x.m >= 120)), no = avgOf(sl.filter(x => x.m < 120));
+  return `<section class="card"><div class="card-head"><h3>${BRICK} Phone brick</h3><span class="muted small">${dur(mins.reduce((a, b) => a + b, 0))} total</span></div>
+    ${barChart({ values: mins.map(m => Math.round(m / 6) / 10), labels: dates.map(d => { const x = parseDate(d); return `${x.getMonth() + 1}/${x.getDate()}`; }), dates, color: 'var(--c)', fmtY: x => x + 'h' })}
+    <div class="big-stats"><div><b>${on.length}</b><span>days bricked</span></div><div><b>${on.length ? dur(on.reduce((a, b) => a + b, 0) / on.length) : '–'}</b><span>avg on those days</span></div><div><b>${dur(Math.max(0, ...db.list('brick').map(b => brickMin(b))))}</b><span>longest</span></div></div>
+    ${yes != null && no != null && sl.filter(x => x.m >= 120).length >= 3 && sl.filter(x => x.m < 120).length >= 3 ? `<p class="small">After days with 2h+ bricked you slept <b>${dur(yes)}</b>, vs <b>${dur(no)}</b> other nights.</p>` : ''}
+  </section>`;
+}
+
+// ---------- injuries & symptoms ----------
+const SPOTS = ['Knee', 'Ankle', 'Foot', 'Shin', 'Hamstring', 'Quad', 'Calf', 'Hip', 'Back', 'Shoulder', 'Wrist / hand', 'Neck', 'Head'];
+const HURT = ['Pain', 'Soreness', 'Swelling', 'Stiffness', 'Cramp', 'Headache', 'Other'];
+const painOf = d => db.list('injuries').filter(x => x.date === d);
+const spotName = x => (x.side ? x.side + ' ' : '') + x.spot.toLowerCase();
+function injuryRow(d) {
+  const recent = db.list('injuries').filter(x => x.date >= addDays(d, -6) && x.date <= d);
+  const bySpot = {};
+  recent.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).forEach(x => { bySpot[spotName(x)] = x; });
+  const list = Object.values(bySpot).slice(-3);
+  return `<section class="card inj-card"><div class="card-head"><h3>🩹 Body</h3><button class="link" data-act="injuryLog">＋ Log</button></div>
+    ${list.length ? list.map(x => `<button class="inj" data-act="injuryLog" data-id="${x.id}"><span class="grow">${esc(spotName(x))[0].toUpperCase() + esc(spotName(x)).slice(1)} · ${esc(x.kind.toLowerCase())}<div class="muted tiny">${x.date === d ? 'today' : fmtDay(x.date)}${x.notes ? ' · ' + esc(x.notes) : ''}</div></span><span class="pain p${Math.min(3, Math.ceil(x.pain / 3.4))}">${x.pain}</span></button>`).join('')
+      : `<p class="muted small">Sore, hurt or off? Log where and how bad, and Pulse looks for what sets it off.</p>`}
+  </section>`;
+}
+function openInjury(id) {
+  const x = id ? db.get('injuries', id) : null;
+  let spot = x?.spot || '', side = x?.side || '', kind = x?.kind || 'Pain', pain = x?.pain || 5;
+  const s = openSheet({
+    title: x ? 'Edit' : '🩹 What hurts?',
+    body: `<div class="field"><label>Where</label><div class="chips" id="sp">${SPOTS.map(p => `<button class="chip sm ${p === spot ? 'on' : ''}" data-x="spot" data-v="${p}">${p}</button>`).join('')}</div>
+        <input id="so" class="mt" placeholder="Somewhere else…" value="${SPOTS.includes(spot) ? '' : esc(spot)}" autocomplete="off"></div>
+      <div class="field"><label>Side</label><div class="seg">${['Left', 'Right', 'Both', ''].map(v => `<button data-x="side" data-v="${v}" class="${v === side ? 'on' : ''}">${v || 'n/a'}</button>`).join('')}</div></div>
+      <div class="field"><label>What kind</label><div class="chips">${HURT.map(h => `<button class="chip sm ${h === kind ? 'on' : ''}" data-x="kind" data-v="${h}">${h}</button>`).join('')}</div></div>
+      <div class="field"><label>How bad: <b id="pv">${pain}</b>/10</label><input type="range" min="1" max="10" id="pr" value="${pain}" class="pain-range"></div>
+      <div class="field"><label>Notes</label><input id="pn" value="${esc(x?.notes || '')}" placeholder="Sharp after practice, swollen in the morning…"></div>
+      <div class="field"><label>When</label><div class="grid2"><input type="date" id="pd" value="${x?.date || ui.date}"><input type="time" id="pt" value="${x?.time || timeStr()}"></div></div>`,
+    footer: `${x ? `<button class="btn ghost danger-t" data-x="del">Delete</button>` : ''}<button class="btn primary grow" data-x="save">Save</button>`,
+  });
+  const pick = (sel, v) => s.$$(`[data-x="${sel}"]`).forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  s.on('click', '[data-x="spot"]', el => { spot = el.dataset.v; s.$('#so').value = ''; pick('spot', spot); if (spot === 'Head' && kind === 'Pain') { kind = 'Headache'; pick('kind', kind); } });
+  s.on('input', '#so', el => { spot = el.value.trim(); pick('spot', ''); });
+  s.on('click', '[data-x="side"]', el => { side = el.dataset.v; pick('side', side); });
+  s.on('click', '[data-x="kind"]', el => { kind = el.dataset.v; pick('kind', kind); });
+  s.on('input', '#pr', el => { pain = +el.value; s.$('#pv').textContent = pain; });
+  s.on('click', '[data-x="del"]', () => { db.remove('injuries', x.id); s.close(); });
+  s.on('click', '[data-x="save"]', () => {
+    if (!spot) return toast('Pick where');
+    db.put('injuries', { ...(x || { id: uid() }), spot: spot[0].toUpperCase() + spot.slice(1), side, kind, pain, notes: s.$('#pn').value.trim(), date: s.$('#pd').value || ui.date, time: s.$('#pt').value || timeStr() });
+    s.close(); toast('Logged');
+  });
+}
+// For each spot: what was going on around flare-ups (pain 5+) compared with
+// the other days she logged that spot. Only shown when it's clearly different.
+function injuryPatterns() {
+  const all = db.list('injuries'), g = goals(), out = [];
+  const spots = {};
+  all.forEach(x => { (spots[spotName(x)] = spots[spotName(x)] || []).push(x); });
+  for (const [name, logs] of Object.entries(spots)) {
+    if (logs.length < 4) continue;
+    const day = d => db.get('days', d) || {};
+    const trained = d => actsOf(day(d)).some(a => a !== 'rest');
+    const checks = {
+      'after 2+ training days in a row': x => trained(x.date) && trained(addDays(x.date, -1)),
+      'the day after weights': x => actsOf(day(addDays(x.date, -1))).includes('weights'),
+      'on or right after a game': x => !!(gameOn(x.date) || gameOn(addDays(x.date, -1))),
+      'after a short night': x => day(x.date).sleepMin != null && day(x.date).sleepMin < sleepGoal() - 30,
+      'when recovery was low': x => day(x.date).recovery != null && day(x.date).recovery < 50,
+      'on period days': x => !!day(x.date).period,
+      'on low-fuel days': x => { const t = sumMacros(dayEntries(addDays(x.date, -1)).map(e => e.macros)); return t.cal > 0 && t.cal < g.cal * 0.75; },
+    };
+    const flare = logs.filter(x => x.pain >= 5), calm = logs.filter(x => x.pain < 5);
+    if (flare.length < 2 || calm.length < 2) continue;
+    const found = [];
+    for (const [label, fn] of Object.entries(checks)) {
+      const a = flare.filter(fn).length / flare.length, b = calm.filter(fn).length / calm.length;
+      if (a - b >= 0.3 && flare.filter(fn).length >= 2) found.push({ label, a: Math.round(a * 100), b: Math.round(b * 100) });
+    }
+    const last = logs.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)).slice(-6).map(x => x.pain);
+    out.push({ name, n: logs.length, avg: logs.reduce((s, x) => s + x.pain, 0) / logs.length, last, found: found.sort((x, y) => (y.a - y.b) - (x.a - x.b)).slice(0, 3) });
+  }
+  return out;
+}
+function injuryTrends() {
+  const p = injuryPatterns();
+  if (!db.list('injuries').length) return '';
+  return `<section class="card gut-trends"><div class="card-head"><h3>🩹 What flares it up</h3></div>
+    ${p.length ? p.map(x => `<div class="inj-sum"><b>${esc(x.name[0].toUpperCase() + x.name.slice(1))}</b> <span class="muted small">${x.n} logs · avg ${fmt(x.avg)}/10 · recent ${x.last.join(' → ')}</span>
+      ${x.found.length ? x.found.map(f => `<div class="fact"><span>⚠️</span><div>Worse <b>${f.label}</b> (${f.a}% of bad days vs ${f.b}% of better ones)</div></div>`).join('') : '<p class="muted small">No clear pattern yet.</p>'}</div>`).join('')
+      : `<p class="muted small">Log the same spot a few times (good and bad days) and patterns show up here.</p>`}
+  </section>`;
+}
+
+// ---------- journal photos ----------
+async function addJournalPhoto(date, file) {
+  const img = await fileToDataURL(file, 1000, 0.7);
+  const d = { ...(db.get('days', date) || { id: date, date }) };
+  const ph = { id: uid(), img, desc: '' };
+  d.photos = [...(d.photos || []), ph];
+  db.put('days', d);
+  // A short description so Ask Pulse knows what's in it.
+  try {
+    const r = await fetch(CONFIG_PUSH() + '/describe', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: img }) });
+    const j = await r.json();
+    if (j.text) { const cur = { ...(db.get('days', date) || d) }; cur.photos = (cur.photos || []).map(p => p.id === ph.id ? { ...p, desc: j.text } : p); db.put('days', cur); }
+  } catch {}
+}
+
+// ---------- developer mode: what's new, one tap each ----------
+const WHATS_NEW = [
+  ['nNotify', 'Notifications pop-up', 'Every 3rd open while they are off'],
+  ['nHealth', 'Apple Health suggestion', 'Every 2 weeks if not set up, one at a time'],
+  ['nCal', 'Calendar suggestion', 'Every 2 weeks if no calendar is linked'],
+  ['allOn', 'All reminders on/off', 'One tick for every reminder'],
+  ['water', 'Water: any amount', 'Type oz or ml, add, take away or set the total'],
+  ['caf', 'Caffeine', 'mg box on foods and quick add, daily total, late heads-up'],
+  ['cafLog', 'Caffeine log', 'One-tap re-log, plus a list in Food'],
+  ['checks', 'Check-offs', 'To-dos burst when checked; rings and calories get a ✓'],
+  ['update', 'Update tour', 'What she sees the first time she opens this version'],
+  ['quick', 'Quick log buttons', 'Every log on Today; each jumps to its tab'],
+  ['layout', 'New layout', 'Short Today; Food, Plan, Body tabs; Me is her initial'],
+  ['sched', 'Plan: week planner', 'Whole week like a planner; tap a day for details'],
+  ['month', 'Month calendar', "Tap a day: what's due, then Go to day"],
+  ['links', 'Linked calendars', 'Paste a Teamworks, Google, iCloud or Canvas link'],
+  ['todo', 'To-dos', 'Due date, time and class; "Due soon" on Today'],
+  ['journal', 'Journal photos', 'Add photos; Ask Pulse can read them'],
+  ['brick', 'Phone brick', 'Start/Unbrick, log time, stats in Trends'],
+  ['brickAuto', 'Brick on its own', 'Optional Shortcut that logs for her'],
+  ['injury', 'Injuries & symptoms', 'Where, what kind, pain 1-10'],
+  ['injTrend', 'What flares it up', 'Patterns in Trends'],
+  ['games', 'Games: postponed & editable', 'Updates from the Pilots feed; tap to edit'],
+];
+function devShow(k) {
+  const scrollTo2 = (tab, sel) => { go(tab); setTimeout(() => { const el = document.querySelector(sel); if (el) { window.scrollTo({ top: el.getBoundingClientRect().top + scrollY - 90, behavior: 'smooth' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1600); } }, 250); };
+  ({
+    nNotify: () => showNudge('notify'), nHealth: () => showNudge('health'), nCal: () => showNudge('cal'),
+    allOn: () => scrollTo2('me', '.all-row'),
+    water: () => { ui.date = dateStr(); ui.foodView = 'log'; scrollTo2('food', '.card.water'); setTimeout(openWater, 700); },
+    layout: () => { ui.date = dateStr(); go('today'); },
+    update: () => showUpdate(true),
+    quick: () => scrollTo2('today', '.quick'),
+    month: () => openCalendar(),
+    cafLog: () => { ui.date = dateStr(); ui.foodView = 'log'; scrollTo2('food', '.caf-card'); setTimeout(openCaf, 700); },
+    checks: () => { ui.planWeek = 0; scrollTo2('plan', '.pday.today'); },
+    caf: () => openFoodForm({ prefill: { name: 'Celsius', servingG: 355, cal: 10, caf: 200, servingLabel: '1 can' } }),
+    sched: () => { ui.planWeek = 0; go('plan'); }, links: () => openCalLinks(), todo: () => openTodo(null, addDays(dateStr(), 1)),
+    journal: () => { ui.date = dateStr(); scrollTo2('body', '.journal-card'); setTimeout(() => openJournal(dateStr()), 700); },
+    brick: () => { ui.date = dateStr(); scrollTo2('body', '.brick-card'); },
+    brickAuto: () => openBrickSetup(),
+    injury: () => openInjury(null),
+    injTrend: () => scrollTo2('trends', '.inj-sum'),
+    games: () => openGames(),
+  })[k]?.();
+}
+
+// ---------- set-up nudges ----------
+const NUDGES = {
+  notify: { e: '🔔', t: 'Turn on notifications', b: "Pulse works best with them on: bedtime, meds, game days and wins. Never more than a few a day, and nothing after bedtime.", go: 'Turn on', act: () => turnOnNotify() },
+  health: { e: '⌚', t: 'Try connecting Apple Health', b: 'Sleep, recovery and calories burned fill in from your Whoop on their own. Takes about 2 minutes to set up.', go: 'Set it up', act: () => healthSync() },
+  cal: { e: '📅', t: 'Try linking your schedule', b: 'Paste your Teamworks or Google calendar link once and practices, lifts and travel show up here. Takes a minute.', go: 'Link it', act: () => openCalLinks() },
+  brick: { e: BRICK, t: 'Log Brick time on its own', b: 'An iPhone Shortcut can log every time you brick and unbrick, so you never have to tap. Optional.', go: 'Show me', act: () => openBrickSetup() },
+};
+const nudgeState = () => { try { return JSON.parse(localStorage.getItem('pulseNudge-' + (DEMO ? DEMO_KEY : 'me')) || '{}'); } catch { return {}; } };
+const saveNudge = st => { try { localStorage.setItem('pulseNudge-' + (DEMO ? DEMO_KEY : 'me'), JSON.stringify(st)); } catch {} };
+function nudgeNeeded(k) {
+  if (k === 'notify') return !ui.notifyOn && notify.supported();
+  if (k === 'health') return !profile()?.healthReady;
+  if (k === 'cal') return !(profile()?.calLinks || []).length;
+  if (k === 'brick') return !profile()?.brickKey && db.list('brick').length >= 2;
+  return false;
+}
+function maybeNudge() {
+  if (sheets.length || document.querySelector('.tour, .wrapped, .winscreen, .splash')) return;
+  const st = nudgeState();
+  st.opens = (st.opens || 0) + 1;
+  let pick = null;
+  if (nudgeNeeded('notify') && st.opens % 3 === 0) pick = 'notify';
+  else if (Date.now() - (st.lastSetup || 0) > 14 * 864e5) {
+    pick = ['health', 'cal', 'brick'].filter(k => nudgeNeeded(k) && !st['never_' + k]).sort((a, b) => (st['at_' + a] || 0) - (st['at_' + b] || 0))[0] || null;
+    if (pick) st.lastSetup = Date.now();
+  }
+  if (pick) st['at_' + pick] = Date.now();
+  saveNudge(st);
+  if (pick) showNudge(pick);
+}
+function showNudge(k) {
+  const n = NUDGES[k];
+  const s = openSheet({
+    title: '',
+    body: `<div class="nudge"><div class="nudge-e">${n.e}</div><h3>${n.t}</h3><p class="muted">${n.b}</p></div>`,
+    footer: `<div class="nudge-btns"><button class="btn primary full" data-x="go">${n.go}</button>
+      <button class="btn ghost full" data-x="later">Not now</button>${k === 'notify' ? '' : `<button class="link muted small" data-x="never">Don't show again</button>`}</div>`,
+  });
+  s.on('click', '[data-x="go"]', () => { s.close(); n.act(); });
+  s.on('click', '[data-x="later"]', () => s.close());
+  s.on('click', '[data-x="never"]', () => { const st = nudgeState(); st['never_' + k] = true; saveNudge(st); s.close(); });
 }
 
 // A short personal hello each time the app opens.
@@ -3416,7 +4300,7 @@ function splash(first) {
   setTimeout(done, first ? 2400 : 1700);
   let due = false;
   try { due = first || tourDue(); } catch {}
-  if (due) setTimeout(startTour, (first ? 2400 : 1700) + 500);
+  if (due) { markSeen(); setTimeout(() => startTour(), (first ? 2400 : 1700) + 500); }
 }
 
 // ---------- pull to refresh ----------
@@ -3454,6 +4338,7 @@ db.onChange(kind => {
 });
 sync.onStatus(() => { if (ui.tab === 'me') queueRender(); });
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && appEl.classList.contains('ready')) { syncCals(); pullBrick(); }
   if (document.visibilityState !== 'visible') return;
   const t = dateStr();
   if (t !== lastToday) { if (ui.date === lastToday) ui.date = t; lastToday = t; queueRender(); }
@@ -3467,6 +4352,17 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('online', () => sync.schedule(100));
 
 async function boot() {
+  // Right after an update the phone can briefly mix new and old files. If the
+  // storage file is the old one, fetch fresh copies once and start again.
+  if (!db.KINDS.includes('brick')) {
+    try {
+      if (!sessionStorage.getItem('pulseFix')) {
+        sessionStorage.setItem('pulseFix', '1');
+        await Promise.all(['js/db.js', 'js/util.js', 'js/games.js', 'js/lookup.js', 'js/demo.js', 'styles.css', 'index.html'].map(f => fetch(f, { cache: 'reload' }).catch(() => {})));
+        return location.reload();
+      }
+    } catch {}
+  }
   if ('serviceWorker' in navigator && !DEV) navigator.serviceWorker.register('sw.js').catch(() => {});
   try {
     if (DEMO) {

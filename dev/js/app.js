@@ -4352,6 +4352,17 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('online', () => sync.schedule(100));
 
 async function boot() {
+  // Right after an update the phone can briefly mix new and old files. If the
+  // storage file is the old one, fetch fresh copies once and start again.
+  if (!db.KINDS.includes('brick')) {
+    try {
+      if (!sessionStorage.getItem('pulseFix')) {
+        sessionStorage.setItem('pulseFix', '1');
+        await Promise.all(['js/db.js', 'js/util.js', 'js/games.js', 'js/lookup.js', 'js/demo.js', 'styles.css', 'index.html'].map(f => fetch(f, { cache: 'reload' }).catch(() => {})));
+        return location.reload();
+      }
+    } catch {}
+  }
   if ('serviceWorker' in navigator && !DEV) navigator.serviceWorker.register('sw.js').catch(() => {});
   try {
     if (DEMO) {

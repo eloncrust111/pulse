@@ -1,13 +1,13 @@
 // Offline support. App files: network first (so updates show up right away),
 // falling back to cache. Libraries from CDNs: cache first.
-const CACHE = 'pulse-v30';
+const CACHE = 'pulse-v32';
 const SHELL = ['./', 'index.html', 'styles.css', 'config.js', 'manifest.webmanifest', 'manifest-demo.webmanifest',
   'js/app.js', 'js/db.js', 'js/util.js', 'js/charts.js', 'js/patterns.js', 'js/lookup.js', 'js/sync.js', 'js/share-image.js', 'js/games.js', 'js/health.js', 'js/notify.js', 'js/demo.js',
   'icons/icon-192.png', 'icons/apple-touch-icon.png'];
 const CDN = ['cdn.jsdelivr.net', 'unpkg.com'];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
@@ -20,7 +20,8 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin === location.origin) {
-    e.respondWith(fetch(req).then(res => {
+    // no-cache: always check with the server, so an update never mixes old and new files.
+    e.respondWith(fetch(req, { cache: 'no-cache' }).then(res => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
       return res;
     }).catch(() => caches.match(req, { ignoreSearch: true }).then(r => r || caches.match('index.html'))));

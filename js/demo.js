@@ -37,7 +37,7 @@ export async function seedDemo() {
   food('shake', 'Protein Shake Chocolate', 'Fairlife Core Power', 414, 170, 26, 8, 4.5, 1, { tags: ['Dairy', 'Protein powder'], fav: true });
   food('bar', 'Protein Bar Cookies & Cream', 'Barebells', 55, 200, 20, 19, 8, 3, { tags: ['Sugar alcohol', 'Dairy'], gf: 'maybe' });
   food('kind', 'Dark Chocolate Nuts & Sea Salt', 'KIND', 40, 180, 6, 16, 15, 7);
-  food('celsius', 'Celsius Sparkling Orange', 'Celsius', 355, 10, 0, 2, 0, 0, { tags: ['Caffeine', 'Artificial sweetener', 'Carbonated'] });
+  food('celsius', 'Celsius Sparkling Orange', 'Celsius', 355, 10, 0, 2, 0, 0, { caf: 200, tags: ['Caffeine', 'Artificial sweetener', 'Carbonated'] });
   food('chips', 'Tortilla Chips Sea Salt', 'Siete', 28, 130, 1, 19, 6, 1, { tags: ['Fried / greasy'] });
   food('avocado', 'Avocado', '', 50, 80, 1, 4, 7.5, 3.4);
   food('cheese', 'String Cheese', 'Tillamook', 28, 80, 7, 0, 6, 0, { tags: ['Dairy'] });
@@ -151,6 +151,26 @@ export async function seedDemo() {
     [-15, '14:00', 2, ['Brain fog', 'Tired / drained'], ['Poor sleep']], [-9, '17:20', 1, ['Headache'], ['Not enough water']],
   ];
   feel.forEach(([o, time, level, feelings, context]) => db.put('feel', { id: id('o'), date: addDays(today, o), time, level, feelings, context, notes: '' }));
+
+  // Schedule, to-dos, Brick and a sore knee, so every screen has something in it.
+  const ev = (o, start, end, title, where = '') => db.put('events', { id: id('ev'), date: addDays(today, o), start, end, title, where });
+  for (let o = -3; o <= 10; o++) {
+    const dow = new Date(addDays(today, o) + 'T12:00').getDay();
+    if (dow !== 0) ev(o, '14:30', '17:00', 'Practice', 'Chiles Center');
+    if (dow === 2 || dow === 4) ev(o, '07:00', '08:00', 'Team lift', 'Weight room');
+    if (dow >= 1 && dow <= 5) ev(o, '10:20', '11:15', 'BIO 205', 'Swindells 102');
+  }
+  ev(1, '12:00', '12:30', 'Film', 'Team room');
+  [['Bio lab report', 1, '23:59', 'BIO 205'], ['Read ch. 6', 2, null, 'PSY 101'], ['Essay draft', 4, '17:00', 'ENG 112'], ['Study group', -1, null, '']]
+    .forEach(([title, o, time, cls], i) => db.put('todos', { id: id('td'), title, due: addDays(today, o), time, cls, done: i === 3 }));
+  for (let o = -13; o <= -1; o++) if (o % 2 === 0 || o > -4) {
+    const st = new Date(addDays(today, o) + 'T20:30').getTime() + (o % 3) * 1800e3;
+    db.put('brick', { id: id('br'), start: st, end: st + (90 + ((o * 37) % 90 + 90) % 90) * 60e3 });
+  }
+  db.put('brick', { id: id('br'), start: Date.now() - 52 * 60e3, end: null });
+  [[-12, 3], [-10, 6], [-9, 5], [-6, 2], [-4, 6], [-3, 7], [-1, 4]].forEach(([o, pain]) =>
+    db.put('injuries', { id: id('in'), date: addDays(today, o), time: '18:30', spot: 'Knee', side: 'Right', kind: 'Pain', pain, notes: pain >= 6 ? 'Sharp going up stairs after practice' : '' }));
+  db.put('injuries', { id: id('in'), date: addDays(today, -5), time: '09:00', spot: 'Head', side: '', kind: 'Headache', pain: 4, notes: '' });
 
   db.put('settings', { id: 'profile', name: 'Carly', number: '11', glutenFree: true, showWeight: true, sleepGoal: 540, meds,
     goals: { cal: 2600, p: 135, c: 320, f: 80, fiber: 30, water: 100 }, theme: 'system', healthReady: true });

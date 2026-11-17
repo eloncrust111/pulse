@@ -35,6 +35,7 @@ function offToFood(p) {
     p: v(n.proteins_100g), c: v(n.carbohydrates_100g), f: v(n.fat_100g),
     fiber: v(n.fiber_100g), sugar: v(n.sugars_100g),
     sodium: n.sodium_100g == null ? '' : Math.round(n.sodium_100g * 1000 * k),
+    caf: n.caffeine_100g == null ? '' : Math.round(n.caffeine_100g * 1000 * k),
     gf: glutenStatus(p),
   };
 }
@@ -122,5 +123,6 @@ export function parseLabel(raw) {
     fiber: grab(new RegExp(`fib(?:er|re)[^\\d\\n]{0,6}${N}\\s*g`)),
     sugar: grab(new RegExp(`sugars?[^\\d\\n]{0,6}${N}\\s*g`)),
     sodium: grab(new RegExp(`sodium[^\\d\\n]{0,6}${N}\\s*mg`)),
+    caf: grab(new RegExp(`caffeine[^\\d\\n]{0,12}${N}\\s*mg`)),
   };
 }
