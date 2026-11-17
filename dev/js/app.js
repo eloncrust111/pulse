@@ -382,14 +382,13 @@ function screenToday() {
   <div class="spacer"></div>`;
 }
 function quickRow(d) {
-  const b = d === dateStr() ? brickNow() : null;
   const q = (k, ico, label, cls = '') => `<button data-act="qgo" data-k="${k}" class="${cls}"><span>${ico}</span>${label}</button>`;
   return `<section class="quick">
     ${q('food', '🍽️', 'Food')}${q('water', '💧', 'Water')}${q('caf', '⚡', 'Caffeine')}${q('sleep', '😴', 'Sleep')}
-    ${q('meds', '💊', 'Meds')}${q('train', '🏀', 'Training')}${q('brick', BRICK, b ? 'Unbrick' : 'Brick', b ? 'on' : '')}${q('hurt', '🩹', 'Hurt')}
+    ${q('meds', '💊', 'Meds')}${q('train', '🏀', 'Training')}${q('brick', BRICK, 'Brick')}${q('hurt', '🩹', 'Hurt')}
     ${q('gut', '🤢', 'Stomach')}${q('feel', '😵‍💫', 'Feeling off')}${q('journal', '📓', 'Journal')}${q('todo', '✅', 'To-do')}
   </section>
-  ${b ? `<div class="brick-live">${BRICK} Bricked · ${dur(brickMin(b))} so far</div>` : ''}`;
+`;
 }
 // Each quick button goes to the tab where that log lives, shows the spot, then opens it.
 function quickGo(k) {
@@ -411,7 +410,7 @@ function quickGo(k) {
     sleep: () => to('body', '.sleep-card', () => openBody(t)),
     meds: () => to('body', '.card.meds'),
     train: () => to('body', '.train-card'),
-    brick: () => to('body', '.brick-card', () => (brickNow() ? acts.brickStop : acts.brickStart)()),
+    brick: () => to('body', '.brick-card', () => openBrickLog(t)),
     hurt: () => to('body', '.inj-card', () => openInjury(null)),
     gut: () => to('body', '.card.gut', () => openGut({ date: t })),
     feel: () => to('body', '.card.feel', () => openFeel({ date: t })),
@@ -481,7 +480,7 @@ function screenPlan() {
     ${over.length && !ui.planWeek ? `<section class="card overdue"><div class="due-head">Overdue</div>${over.map(todoRow).join('')}</section>` : ''}
     ${days.map(planDay).join('')}
     <div class="btn-row mt"><button class="btn soft grow" data-act="eventEdit">＋ Event</button><button class="btn primary grow" data-act="todoEdit">＋ To-do</button></div>
-    <div class="btn-col mt"><button class="btn soft" data-act="calLinks">🔗 Linked calendars${calLinks().length ? ` (${calLinks().length})` : ''}</button><button class="btn soft" data-act="games">🏀 Games</button></div>
+    <div class="btn-col mt"><button class="btn soft cal-link-btn" data-act="calLinks">🔗 ${calLinks().length ? `Linked calendars (${calLinks().length})` : 'Link Teamworks or school calendar'}</button><button class="btn soft" data-act="games">🏀 Games</button></div>
   </div>
   <div class="spacer"></div>`;
 }
@@ -1542,7 +1541,7 @@ function askContext() {
   { const ev = eventsOn(t).filter(e => !e.game), tm = eventsOn(addDays(t, 1)).filter(e => !e.game); if (ev.length || tm.length) lines.push(`Schedule today: ${ev.map(e => `${e.start || 'all day'} ${e.title}`).join('; ') || 'nothing'}. Tomorrow: ${tm.map(e => `${e.start || 'all day'} ${e.title}`).join('; ') || 'nothing'}.`); }
   { const td = todosSoon(); if (td.length) lines.push(`To-dos due soon: ${td.map(x => `${x.title}${x.cls ? ` (${x.cls})` : ''} due ${x.due}${x.time ? ' ' + x.time : ''}`).join('; ')}.`); }
   { const ip = injuryPatterns().filter(x => x.found.length); if (ip.length) lines.push(`Injury patterns the app found: ${ip.map(x => `${x.name} worse ${x.found.map(f => f.label).join(', ')}`).join('; ')}.`); }
-  if (brickNow()) lines.push(`Her phone is bricked right now (${dur(brickMin(brickNow()))} so far).`);
+
   lines.push('She weighs almost everything she eats on a food scale, so logged grams are exact. Give portion advice in grams.');
   const tp = bedPlan(t); lines.push(`Tonight: sleep need ${fmtSleep(tp.need.min)}${tp.need.why.length ? ` (${tp.need.why.join(', ')})` : ''}, bed by ${fmtTime(tp.bed)}, up at ${fmtTime(tp.wake)}.`);
   const r = readiness(t); if (r) lines.push(`Readiness today: ${r.t} (${r.facts.join(', ')}).`);
@@ -1755,7 +1754,7 @@ const tourDue = () => DEMO ? !localStorage.getItem('pulseTourDemo') : !NEW && !p
 const UPDATES = {
   '1.5': {
     title: 'Pulse got an update',
-    lines: ['📱 New layout: a shorter Today, plus Food, Plan and Body tabs', '📅 A week planner for assignments, with your Teamworks or school calendar', '⚡ Caffeine, water in any amount, injuries, Brick time and journal photos', '⚙️ Settings moved to the gear in the top corner'],
+    lines: ['📱 New layout: a shorter Today, plus Food, Plan and Body tabs', '📅 A week planner for assignments, plus linking your Teamworks or school calendar', '⚡ Caffeine, water in any amount, injuries, Brick time and journal photos', '⚙️ Settings moved to the gear in the top corner'],
     steps: [
       ['.quick', 'Log anything', 'Every kind of log is one tap here. Each button takes you to the right tab.'],
       ['.nextup, .nextup-empty', 'Up next', "What's left on today's schedule and what's due soon."],
@@ -1764,7 +1763,9 @@ const UPDATES = {
       ['.caf-card', 'Caffeine', 'Log drinks with their mg. Caffeine close to bedtime shows on your sleep card.', 'food'],
       ['[data-tab="plan"]', 'Plan tab', 'Your whole week like a planner: class, practice, games and everything due.', 'plan'],
       ['.pday.today', 'Tap a day', "See everything on it and what's due. Go to day takes you there.", 'plan'],
+      ['.cal-link-btn', 'Link your calendars', 'Paste your Teamworks, Google, iPhone or Canvas calendar link once and everything shows up here. Step-by-step help for each one is inside.', 'plan'],
       ['[data-tab="body"]', 'Body tab', 'Sleep, training, recovery, meds, anything that hurts, Brick and your journal.', 'body'],
+      ['.brick-card', 'Brick time', 'Add how long your phone was bricked, all at once at night or a bit at a time. Trends shows your totals.', 'body'],
       ['.inj-card', 'Injuries', 'Log where it hurts and how bad. Trends shows what seems to flare it up.', 'body'],
       ['.journal-card', 'Journal photos', 'Add photos to your journal. Ask Pulse can see what is in them.', 'body'],
     ],
@@ -3953,30 +3954,45 @@ function sparkle(el) {
     setTimeout(() => p.remove(), 650);
   }
 }
+// Where each app keeps its calendar link, in plain steps.
+const CAL_HOW = {
+  Teamworks: ['Open <b>Teamworks</b> and go to your <b>Calendar</b>.', 'Look for <b>Sync</b>, <b>Subscribe</b> or <b>Export calendar</b> (often under ⋯ or the settings gear).', 'Tap <b>Copy link</b>. If it asks which app, pick copy instead of Apple Calendar.', "Can't find it? Ask your ops person or coach for the team's calendar subscribe link."],
+  'Google Calendar': ['On a <b>computer</b>, open calendar.google.com.', 'Click the ⋮ next to your calendar on the left → <b>Settings and sharing</b>.', 'Scroll to <b>Secret address in iCal format</b> and copy it.', 'Text or email it to yourself, then copy it on your phone.'],
+  'iPhone Calendar': ['Open the <b>Calendar</b> app and tap <b>Calendars</b> at the bottom.', 'Tap ⓘ next to the calendar you want (it has to be an iCloud one).', 'Turn on <b>Public Calendar</b>, tap <b>Share Link…</b> → <b>Copy</b>.'],
+  'Canvas / school': ['Open Canvas (or your school site) in Safari and go to <b>Calendar</b>.', 'Tap <b>Calendar Feed</b> (bottom right on Canvas).', 'Copy the link it shows. Assignments show up with their due dates.'],
+};
 function openCalLinks() {
   const s = openSheet({
     title: '🔗 Linked calendars', full: true,
-    body: `<p class="small">Paste a calendar link once and Pulse keeps it up to date. Works with:</p>
-      <ul class="hs small"><li><b>Teamworks:</b> Calendar → Sync / Subscribe → copy the link</li>
-        <li><b>Google Calendar</b> (on a computer): Settings → your calendar → <i>Secret address in iCal format</i></li>
-        <li><b>iPhone/iCloud:</b> Calendar app → Calendars → ⓘ next to one → Public Calendar → Share Link</li>
-        <li><b>Canvas/Moodle:</b> Calendar → Calendar feed / Export → copy the link</li></ul>
+    body: `<p class="small">Your calendar apps can give you a private <b>link</b> to your calendar. Paste it here once and your practices, classes and due dates show up in Plan and stay up to date on their own.</p>
       <div id="ll"></div>
-      <div class="field mt"><label>Name</label><input id="ln" placeholder="Teamworks" autocomplete="off"></div>
-      <div class="field"><label>Calendar link</label><input id="lu" placeholder="https://… or webcal://…" autocomplete="off" inputmode="url"></div>
-      <button class="btn primary full" data-x="add">Link calendar</button>
-      <p class="muted tiny mt">Didn't work? You can always add events by hand with ＋ Event.</p>`,
+      <div class="due-head">1. Pick where your calendar is</div>
+      <div class="chips">${Object.keys(CAL_HOW).map(k => `<button class="chip" data-x="app" data-k="${k}">${k}</button>`).join('')}</div>
+      <div id="how"></div>
+      <div id="paste" hidden>
+        <div class="due-head">3. Paste it here</div>
+        <div class="field"><input id="lu" placeholder="Paste the link" autocomplete="off" inputmode="url"></div>
+        <button class="btn primary full" data-x="add">Link calendar</button>
+      </div>
+      <p class="muted tiny mt">Can't find a link? No problem. Add events yourself with ＋ Event in Plan.</p>`,
+  });
+  let app = '';
+  s.on('click', '[data-x="app"]', el => {
+    app = el.dataset.k;
+    s.$$('[data-x="app"]').forEach(b => b.classList.toggle('on', b === el));
+    s.$('#how').innerHTML = `<div class="due-head">2. Get the link</div><ol class="cal-steps">${CAL_HOW[app].map(x => `<li>${x}</li>`).join('')}</ol>`;
+    s.$('#paste').hidden = false;
   });
   const draw = () => {
     s.$('#ll').innerHTML = calLinks().map(l => { const c = calCache(l.id); return `<div class="kv-row"><span><b>${esc(l.name)}</b><div class="muted tiny">${c ? `${c.events.length} events · updated ${new Date(c.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}` : 'Not loaded yet'}</div></span>
       <span><button class="link" data-x="sync" data-id="${l.id}">Refresh</button> <button class="link danger-t" data-x="rm" data-id="${l.id}">Remove</button></span></div>`; }).join('');
   };
   s.on('click', '[data-x="add"]', async () => {
-    const url = s.$('#lu').value.trim(), name = s.$('#ln').value.trim() || 'Calendar';
+    const url = s.$('#lu').value.trim(), name = app || 'Calendar';
     if (!/^(https?|webcals?):\/\//i.test(url)) return toast('Paste the full link');
     const link = { id: uid(), name, url };
     const b = s.$('[data-x="add"]'); b.disabled = true; b.textContent = 'Checking…';
-    try { const c = await syncCal(link, true); saveProfile({ calLinks: [...calLinks(), link] }); s.$('#lu').value = ''; s.$('#ln').value = ''; toast(`Linked · ${c.events.length} events`); queueRender(); }
+    try { const c = await syncCal(link, true); saveProfile({ calLinks: [...calLinks(), link] }); s.$('#lu').value = ''; toast(`✓ ${name} linked · ${c.events.length} events`); buzz(); queueRender(); }
     catch (e) { toast(e.message); }
     b.disabled = false; b.textContent = 'Link calendar'; draw();
   });
@@ -3990,34 +4006,46 @@ const brickNow = () => db.list('brick').find(b => !b.end);
 const dur = m => m < 60 ? `${Math.round(m)}m` : fmtSleep(m);
 const brickMin = (b, from = 0, to = Infinity) => Math.max(0, Math.min(b.end || Date.now(), to) - Math.max(b.start, from)) / 60e3;
 const dayBounds = d => [new Date(d + 'T00:00').getTime(), new Date(addDays(d, 1) + 'T00:00').getTime()];
-const brickOn = d => { const [a, z] = dayBounds(d); return db.list('brick').reduce((s, b) => s + brickMin(b, a, z), 0); };
+// Added amounts (mins) count fully on their day; older timer blocks count by clock time.
+const brickOn = d => { const [a, z] = dayBounds(d); return db.list('brick').reduce((s, b) => s + (b.mins != null ? (b.date === d ? b.mins : 0) : brickMin(b, a, z)), 0); };
 function brickRow(d) {
-  if (d !== dateStr()) return '';
-  const on = brickNow(), today = brickOn(d);
+  const on = d === dateStr() ? brickNow() : null, total = brickOn(d), n = brickList(d).length;
   return `<section class="card brick-card"><div class="brick-row">
     <span class="brick-ico">${BRICK}</span>
-    <div class="grow">${on ? `<b>Bricked now</b><div class="muted small">${dur(brickMin(on))} so far${today > brickMin(on) + 1 ? ` · ${dur(today)} today` : ''}</div>`
-      : `<b>Phone brick</b><div class="muted small">${today >= 1 ? `${dur(today)} today` : 'Not today yet'}</div>`}</div>
-    ${on ? `<button class="btn primary" data-act="brickStop">Unbrick</button>` : `<button class="btn soft" data-act="brickLog">Log time</button><button class="btn primary" data-act="brickStart">Start</button>`}
+    <div class="grow"><b>Phone brick</b><div class="muted small">${total >= 1 ? `<b class="tx">${dur(total)}</b> ${d === dateStr() ? 'today' : 'that day'}${n > 1 ? ` · ${n} times` : ''}` : 'Nothing logged yet'}${on ? ' · timer running' : ''}</div></div>
+    ${on ? `<button class="btn soft" data-act="brickStop">Stop timer</button>` : ''}<button class="btn primary" data-act="brickLog">＋ Add time</button>
   </div></section>`;
 }
-function openBrickLog() {
+// Times logged on a day (an old running timer counts too).
+const brickList = d => { const [a, z] = dayBounds(d); return db.list('brick').filter(b => b.mins != null ? b.date === d : brickMin(b, a, z) >= 1).sort((x, y) => x.start - y.start); };
+// She adds how long her phone was bricked: once at night for the whole day, or a
+// few times as she goes. Each add stacks onto the day's total.
+function openBrickLog(date = ui.date) {
+  let h = 0, m = 0;
   const s = openSheet({
-    title: 'Log Brick time',
-    body: `<div class="chips">${[30, 60, 90, 120, 180, 240].map(m => `<button class="chip" data-x="m" data-m="${m}">${dur(m)}</button>`).join('')}</div>
-      <div class="grid2 mt"><div class="field"><label>Hours</label><input id="bh" inputmode="decimal" placeholder="0"></div><div class="field"><label>Ended at</label><input type="time" id="be" value="${timeStr()}"></div></div>
-      <button class="link muted small" data-x="setup">Log it on its own with a Shortcut</button>`,
-    footer: `<button class="btn primary grow" data-x="save">Save</button>`,
+    title: 'Add Brick time',
+    body: `<p class="muted small center">How long was your phone bricked${date === dateStr() ? ' today' : ` on ${fmtDay(date)}`}? Add it all at once or a bit at a time.</p>
+      <div class="chips center">${[30, 60, 90, 120, 180, 240, 360].map(x => `<button class="chip" data-x="m" data-m="${x}">${dur(x)}</button>`).join('')}</div>
+      <div class="grid2 mt"><div class="field"><label>Hours</label><input id="bh" inputmode="numeric" placeholder="0"></div><div class="field"><label>Minutes</label><input id="bm" inputmode="numeric" placeholder="0"></div></div>
+      <div id="bl"></div>`,
+    footer: `<button class="btn primary grow" data-x="save">Add</button>`,
   });
-  s.on('click', '[data-x="m"]', el => { s.$('#bh').value = fmtIn(+el.dataset.m / 60); });
-  s.on('click', '[data-x="setup"]', () => { s.close(); openBrickSetup(); });
+  const draw = () => {
+    const list = brickList(date), total = brickOn(date);
+    s.$('#bl').innerHTML = list.length ? `<div class="due-head">${date === dateStr() ? 'Today' : fmtDay(date)} · ${dur(total)}</div>${list.map(b => `<div class="kv-row"><span>${dur(b.mins ?? brickMin(b, ...dayBounds(date)))}${b.end ? '' : ' (timer)'}</span><button class="link danger-t" data-x="rm" data-id="${b.id}">Remove</button></div>`).join('')}` : '';
+  };
+  s.on('click', '[data-x="m"]', el => { const x = +el.dataset.m; s.$('#bh').value = Math.floor(x / 60) || ''; s.$('#bm').value = x % 60 || ''; });
+  s.on('click', '[data-x="rm"]', el => { db.remove('brick', el.dataset.id); draw(); });
   s.on('click', '[data-x="save"]', () => {
-    const mins = num(s.$('#bh').value) * 60;
+    const mins = num(s.$('#bh').value) * 60 + num(s.$('#bm').value);
     if (!(mins > 0)) return toast('Pick how long');
-    const end = new Date(dateStr() + 'T' + (s.$('#be').value || timeStr())).getTime();
-    db.put('brick', { id: uid(), start: end - mins * 60e3, end });
-    s.close(); toast(`${dur(mins)} of Brick logged`);
+    // Stored as a block ending now (today) or in the evening (another day).
+    const end = date === dateStr() ? Date.now() : new Date(date + 'T21:00').getTime();
+    db.put('brick', { id: uid(), start: end - mins * 60e3, end, date, mins });
+    buzz(); toast(`Added ${dur(mins)} · ${dur(brickOn(date))} total`);
+    s.close();
   });
+  draw();
 }
 // Optional: an iPhone Shortcut posts start/stop to the push server, and the
 // app collects them when it opens.
@@ -4060,7 +4088,7 @@ function brickTrends(dates) {
   const yes = avgOf(sl.filter(x => x.m >= 120)), no = avgOf(sl.filter(x => x.m < 120));
   return `<section class="card"><div class="card-head"><h3>${BRICK} Phone brick</h3><span class="muted small">${dur(mins.reduce((a, b) => a + b, 0))} total</span></div>
     ${barChart({ values: mins.map(m => Math.round(m / 6) / 10), labels: dates.map(d => { const x = parseDate(d); return `${x.getMonth() + 1}/${x.getDate()}`; }), dates, color: 'var(--c)', fmtY: x => x + 'h' })}
-    <div class="big-stats"><div><b>${on.length}</b><span>days bricked</span></div><div><b>${on.length ? dur(on.reduce((a, b) => a + b, 0) / on.length) : '–'}</b><span>avg on those days</span></div><div><b>${dur(Math.max(0, ...db.list('brick').map(b => brickMin(b))))}</b><span>longest</span></div></div>
+    <div class="big-stats"><div><b>${on.length}</b><span>days bricked</span></div><div><b>${on.length ? dur(on.reduce((a, b) => a + b, 0) / on.length) : '–'}</b><span>avg on those days</span></div><div><b>${dur(Math.max(0, ...db.list('brick').map(b => b.mins ?? brickMin(b))))}</b><span>longest</span></div></div>
     ${yes != null && no != null && sl.filter(x => x.m >= 120).length >= 3 && sl.filter(x => x.m < 120).length >= 3 ? `<p class="small">After days with 2h+ bricked you slept <b>${dur(yes)}</b>, vs <b>${dur(no)}</b> other nights.</p>` : ''}
   </section>`;
 }
@@ -4181,8 +4209,7 @@ const WHATS_NEW = [
   ['links', 'Linked calendars', 'Paste a Teamworks, Google, iCloud or Canvas link'],
   ['todo', 'To-dos', 'Due date, time and class; "Due soon" on Today'],
   ['journal', 'Journal photos', 'Add photos; Ask Pulse can read them'],
-  ['brick', 'Phone brick', 'Start/Unbrick, log time, stats in Trends'],
-  ['brickAuto', 'Brick on its own', 'Optional Shortcut that logs for her'],
+  ['brick', 'Phone brick', 'Add time for the day, as often as she wants'],
   ['injury', 'Injuries & symptoms', 'Where, what kind, pain 1-10'],
   ['injTrend', 'What flares it up', 'Patterns in Trends'],
   ['games', 'Games: postponed & editable', 'Updates from the Pilots feed; tap to edit'],
@@ -4203,7 +4230,6 @@ function devShow(k) {
     sched: () => { ui.planWeek = 0; go('plan'); }, links: () => openCalLinks(), todo: () => openTodo(null, addDays(dateStr(), 1)),
     journal: () => { ui.date = dateStr(); scrollTo2('body', '.journal-card'); setTimeout(() => openJournal(dateStr()), 700); },
     brick: () => { ui.date = dateStr(); scrollTo2('body', '.brick-card'); },
-    brickAuto: () => openBrickSetup(),
     injury: () => openInjury(null),
     injTrend: () => scrollTo2('trends', '.inj-sum'),
     games: () => openGames(),
@@ -4233,7 +4259,7 @@ function maybeNudge() {
   let pick = null;
   if (nudgeNeeded('notify') && st.opens % 3 === 0) pick = 'notify';
   else if (Date.now() - (st.lastSetup || 0) > 14 * 864e5) {
-    pick = ['health', 'cal', 'brick'].filter(k => nudgeNeeded(k) && !st['never_' + k]).sort((a, b) => (st['at_' + a] || 0) - (st['at_' + b] || 0))[0] || null;
+    pick = ['health', 'cal'].filter(k => nudgeNeeded(k) && !st['never_' + k]).sort((a, b) => (st['at_' + a] || 0) - (st['at_' + b] || 0))[0] || null;
     if (pick) st.lastSetup = Date.now();
   }
   if (pick) st['at_' + pick] = Date.now();

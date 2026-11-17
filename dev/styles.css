@@ -1016,3 +1016,7 @@ button, a, label, input, select, textarea { touch-action: manipulation; }
 .me-btn svg { width: 21px; height: 21px; fill: none; stroke: #fff; stroke-width: 1.9; stroke-linecap: round; }
 .upd-list { display: grid; gap: 8px; margin: 14px 0 4px; }
 .upd-line { background: var(--lav-3); border-radius: 12px; padding: 10px 12px; font-size: 14px; }
+
+.cal-steps { margin: 4px 0 6px; padding-left: 20px; font-size: 14px; line-height: 1.45; }
+.cal-steps li { margin: 4px 0; }
+.chips.center { justify-content: center; }

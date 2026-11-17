@@ -167,7 +167,6 @@ export async function seedDemo() {
     const st = new Date(addDays(today, o) + 'T20:30').getTime() + (o % 3) * 1800e3;
     db.put('brick', { id: id('br'), start: st, end: st + (90 + ((o * 37) % 90 + 90) % 90) * 60e3 });
   }
-  db.put('brick', { id: id('br'), start: Date.now() - 52 * 60e3, end: null });
   [[-12, 3], [-10, 6], [-9, 5], [-6, 2], [-4, 6], [-3, 7], [-1, 4]].forEach(([o, pain]) =>
     db.put('injuries', { id: id('in'), date: addDays(today, o), time: '18:30', spot: 'Knee', side: 'Right', kind: 'Pain', pain, notes: pain >= 6 ? 'Sharp going up stairs after practice' : '' }));
   db.put('injuries', { id: id('in'), date: addDays(today, -5), time: '09:00', spot: 'Head', side: '', kind: 'Headache', pain: 4, notes: '' });
