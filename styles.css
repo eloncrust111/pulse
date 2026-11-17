@@ -722,6 +722,9 @@ textarea { resize: vertical; }
 .ob-sum span { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; font-size: 15px; font-weight: 600; }
 .ob-foot { padding-top: 16px; }
 .ob .field select { width: 100%; }
+.demo-tag.dev { background: #111; }
+.ver { display: block; margin: 18px auto 6px; background: none; border: 0; color: var(--muted); font-size: 12px; padding: 8px 16px; }
+.dev-card { border: 2px dashed var(--warn); }
 .demo-tag.new { background: var(--good); border: 0; pointer-events: auto; font: inherit; font-size: 12px; font-weight: 700; color: #fff; }
 body.is-new .ob { padding-top: calc(max(env(safe-area-inset-top), 20px) + 40px); }
 .chip-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 6px 0 10px; }

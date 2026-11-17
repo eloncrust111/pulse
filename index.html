@@ -15,6 +15,8 @@
   <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
   <link rel="manifest" id="mf" href="manifest.webmanifest">
   <script>
+    // Developer mode (switched on from Me) runs the test build in /dev/.
+    try { if (localStorage.getItem('pulseDev') === '1' && !location.pathname.includes('/dev/')) location.replace('dev/' + location.search); } catch {}
     // Pull-to-refresh reloads quietly: no logo placeholder while it boots.
     try { if (sessionStorage.getItem('pulseQuiet')) document.documentElement.classList.add('quiet'); } catch {}
     // ?demo installs as its own Home Screen app ("Pulse Demo") with sample data.

@@ -55,8 +55,13 @@ const OFF_LEVELS = [
 const DEFAULT_GOALS = { cal: 2400, p: 140, c: 300, f: 75, fiber: 30, water: 100 };
 // This copy of Pulse is set up for Carly. Set to null to go back to asking each person.
 const OWNER = { name: 'Carly', number: '11', glutenFree: true };
+const APP_VERSION = '1.4';
+// Developer mode: the test build lives in /dev/ with its own sample data.
+// The live app sends a phone there once the hidden switch in Me is turned on.
+const DEV = location.pathname.includes('/dev/');
 // ?demo opens a separate copy filled with sample data (see demo.js).
-const DEMO = new URLSearchParams(location.search).has('demo');
+const DEMO = DEV || new URLSearchParams(location.search).has('demo');
+const DEMO_KEY = DEV ? 'devdemo' : 'demo';
 // ?new is a throwaway copy that starts at first-time setup every time it opens.
 const NEW = !DEMO && new URLSearchParams(location.search).has('new');
 
@@ -2049,6 +2054,9 @@ function screenMe() {
       </div>
       <p class="muted tiny">${plural(db.list('foods').length, 'food')} · ${plural(db.list('recipes').length, 'recipe')} · ${plural(new Set(db.list('entries').map(e => e.date)).size, 'day')} logged</p>
     </section>
+    ${DEV ? `<section class="card dev-card"><h3>🛠️ Developer mode</h3><p class="muted small">This is the test version with sample data. Carly's app doesn't change until you push it.</p>
+      <button class="btn soft full" data-act="devLeave">Leave developer mode</button></section>` : ''}
+    <button class="ver" data-act="verTap">Pulse ${APP_VERSION}${DEV ? ' · dev' : ''}</button>
 
 
   </div>`;
@@ -2106,6 +2114,18 @@ const acts = {
   trackTog: d => saveProfile({ track: { ...(profile()?.track || {}), [d.k]: !tracks(d.k) } }),
   period: d => setPeriod(d.f),
   periodFeel: d => togglePeriodFeel(d.k),
+  // Seven taps on the version number, then the code, switches this phone to the test build.
+  verTap: () => {
+    if (DEV) return;
+    ui.verTaps = (ui.verTaps || 0) + 1;
+    clearTimeout(ui.verT); ui.verT = setTimeout(() => { ui.verTaps = 0; }, 3000);
+    if (ui.verTaps < 7) return;
+    ui.verTaps = 0;
+    if (prompt('Developer code') !== 'pulsedev') return;
+    try { localStorage.setItem('pulseDev', '1'); } catch {}
+    location.replace('dev/');
+  },
+  devLeave: () => { try { localStorage.removeItem('pulseDev'); } catch {} location.replace('../'); },
   winPreview: () => winScreen(GAMES.find(g => g.result?.startsWith('W')) || { ...GAMES[0], result: 'W 72-65' }),
   winDone: d => { try { localStorage.setItem('pulseWinSeen', JSON.stringify([...winSeen(), d.d])); } catch {} queueRender(); },
   notifyOn: () => turnOnNotify(),
@@ -3339,7 +3359,7 @@ function startApp({ first = false } = {}) {
   let quiet = false;
   try { quiet = !!sessionStorage.getItem('pulseQuiet'); sessionStorage.removeItem('pulseQuiet'); } catch {}
   if (!quiet || first) splash(first);
-  if (DEMO) document.body.insertAdjacentHTML('beforeend', '<div class="demo-tag">Sample data</div>');
+  if (DEMO) document.body.insertAdjacentHTML('beforeend', `<div class="demo-tag${DEV ? ' dev' : ''}">${DEV ? 'DEV · sample data' : 'Sample data'}</div>`);
   navigator.storage?.persist?.();
   notify.clearStale(handledNotes());
   if (DEMO && new URLSearchParams(location.search).has('win')) setTimeout(() => acts.winPreview(), 2200);
@@ -3447,14 +3467,14 @@ document.addEventListener('visibilitychange', () => {
 window.addEventListener('online', () => sync.schedule(100));
 
 async function boot() {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator && !DEV) navigator.serviceWorker.register('sw.js').catch(() => {});
   try {
     if (DEMO) {
       // Fresh sample data each day so "today" always looks lived-in.
-      const day = localStorage.getItem('pulseDemoDay');
-      if (day !== dateStr()) await new Promise(r => { const q = indexedDB.deleteDatabase('pulse-demo'); q.onsuccess = q.onerror = q.onblocked = r; });
-      await db.init('demo');
-      if (!profile()) { await (await import('./demo.js')).seedDemo(); localStorage.setItem('pulseDemoDay', dateStr()); }
+      const day = localStorage.getItem('pulseDemoDay-' + DEMO_KEY);
+      if (day !== dateStr()) await new Promise(r => { const q = indexedDB.deleteDatabase('pulse-' + DEMO_KEY); q.onsuccess = q.onerror = q.onblocked = r; });
+      await db.init(DEMO_KEY);
+      if (!profile()) { await (await import('./demo.js')).seedDemo(); localStorage.setItem('pulseDemoDay-' + DEMO_KEY, dateStr()); }
     } else if (NEW) {
       await new Promise(r => { const q = indexedDB.deleteDatabase('pulse-new'); q.onsuccess = q.onerror = q.onblocked = r; });
       await db.init('new');
