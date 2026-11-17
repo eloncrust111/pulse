@@ -178,7 +178,7 @@ function macroBar(label, k, v, goal) {
   const pct = Math.min(100, (v / (goal || 1)) * 100), left = goal - v;
   return `<div class="mb"><div class="mb-top"><span>${label}</span><span><b>${fmt(v)}</b> / ${fmt(goal)}g</span></div>
     <div class="mb-track"><i class="bg-${k}" style="width:${pct}%"></i></div>
-    <div class="mb-left">${left > 0.5 ? fmt(left) + 'g to go' : 'Goal hit ✓'}</div></div>`;
+    <div class="mb-left ${left > 0.5 ? '' : 'hit'}">${left > 0.5 ? fmt(left) + 'g to go' : 'Goal hit ✓'}</div></div>`;
 }
 
 // ---------- data helpers ----------
@@ -303,22 +303,35 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 function fmtIn(v) { return v == null || v === '' ? '' : String(Math.round(v * 10) / 10); }
 
 // ---------- rendering ----------
-const screens = { today: screenToday, foods: screenFoods, recipes: screenRecipes, trends: screenTrends, me: screenMe };
+const screens = { today: screenToday, food: screenFood, plan: screenPlan, body: screenBody, trends: screenTrends, me: screenMe };
 let renderQueued = false;
 function render() {
   renderQueued = false;
   if (!appEl.classList.contains('ready')) return;
   main.innerHTML = screens[ui.tab]();
   $$('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === ui.tab));
-  $('#fab').hidden = ui.tab !== 'today';
+  $('#fab').hidden = !(ui.tab === 'today' || (ui.tab === 'food' && (ui.foodView || 'log') === 'log'));
   checkRings();
 }
 const queueRender = () => { if (!renderQueued) { renderQueued = true; queueMicrotask(render); } };
 function go(tab) { ui.tab = tab; render(); window.scrollTo(0, 0); }
 
 function header(title, sub = '', extra = '') {
-  return `<header class="top"><div class="top-row"><div><h1>${title}</h1>${sub ? `<div class="top-sub">${sub}</div>` : ''}</div>${extra}</div></header>`;
+  return `<header class="top"><div class="top-row"><div><h1>${title}</h1>${sub ? `<div class="top-sub">${sub}</div>` : ''}</div><div class="top-r">${extra}${title === 'Me' ? '' : meBtn()}</div></div></header>`;
 }
+// Her initial in the corner opens Me (settings, goals, reminders).
+const meBtn = () => `<button class="me-btn" data-act="tab" data-tab="me" aria-label="Me">${esc((firstName() || 'M')[0].toUpperCase())}</button>`;
+function dateNav(d) {
+  return `<div class="datenav">
+      <button class="dn-btn" data-act="day" data-n="-1" aria-label="Previous day">‹</button>
+      <button class="datebtn" data-act="calendar" aria-label="Open calendar">${fmtDay(d)}<span class="date-sub">${icon('calendar')}${d === dateStr() ? parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Calendar'}</span></button>
+      <button class="dn-btn" data-act="day" data-n="1" aria-label="Next day">›</button>
+    </div>
+    ${d !== dateStr() ? `<button class="pill-btn" data-act="today">Back to today</button>` : ''}`;
+}
+// Food and Body follow the same day as Today, with the same day switcher.
+const dayTop = (title, d, extra = '') => `<header class="top today-top day-top">${meBtn()}<button class="ask-pill" data-act="ask" aria-label="Ask Pulse">✨ Ask</button>
+    <div class="hello">${title}</div>${dateNav(d)}${extra}</header>`;
 
 // ===== TODAY =====
 function greeting() {
@@ -332,18 +345,14 @@ function screenToday() {
   const left = g.cal - t.cal;
   return `
   <header class="top today-top">
+    ${meBtn()}
     <button class="ask-pill" data-act="ask" aria-label="Ask Pulse">✨ Ask</button>
     <div class="hello">${greeting()}, ${esc(firstName())}</div>
-    <div class="datenav">
-      <button class="dn-btn" data-act="day" data-n="-1" aria-label="Previous day">‹</button>
-      <button class="datebtn" data-act="calendar" aria-label="Open calendar">${fmtDay(d)}<span class="date-sub">${icon('calendar')}${d === dateStr() ? parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Calendar'}</span></button>
-      <button class="dn-btn" data-act="day" data-n="1" aria-label="Next day">›</button>
-    </div>
-    ${d !== dateStr() ? `<button class="pill-btn" data-act="today">Back to today</button>` : ''}
+    ${dateNav(d)}
   </header>
   <section class="card hero">
     <div class="hero-row">
-      <div class="hero-ring">${ring(t.cal, g.cal)}<div class="ring-center"><div class="big">${fmt(t.cal)}</div><div class="small">of ${fmt(g.cal)} cal</div></div></div>
+      <div class="hero-ring ${t.cal >= g.cal * 0.9 ? 'hit' : ''}">${ring(t.cal, g.cal)}<div class="ring-center"><div class="big">${fmt(t.cal)}</div><div class="small">of ${fmt(g.cal)} cal</div></div>${t.cal >= g.cal * 0.9 ? '<span class="hero-check">✓</span>' : ''}</div>
       <div class="hero-side">
         <div class="kv"><span>Goal</span><b>${fmt(g.cal)}</b></div>
         <div class="kv"><span>${left > 0 ? 'To go' : 'Goal'}</span><b>${left > 0 ? fmt(left) : 'Hit ✓'}</b></div>
@@ -356,26 +365,160 @@ function screenToday() {
   ${goalRings(d, day, t, g)}
   ${fuelCard(d, day, t, g, ents)}
   ${winCard(d)}
-  ${readinessCard(d)}
-  ${weekCard(d)}
   ${gameBanner(d)}
-  ${scheduleCard(d)}
-  ${activityRow(d, day)}
+  ${nextUpCard(d)}
+  ${quickRow(d)}
+  ${weekCard(d)}
+  <div class="spacer"></div>`;
+}
+function quickRow(d) {
+  const b = d === dateStr() ? brickNow() : null;
+  return `<section class="quick">
+    <button data-act="add"><span>🍽️</span>Food</button>
+    <button data-act="water" data-oz="8"><span>💧</span>+8 oz</button>
+    <button data-act="cafLog"><span>⚡</span>Caffeine</button>
+    <button data-act="${b ? 'brickStop' : 'brickStart'}" class="${b ? 'on' : ''}"><span>🧱</span>${b ? 'Unbrick' : 'Brick'}</button>
+    <button data-act="injuryLog"><span>🩹</span>Hurt</button>
+  </section>
+  ${b ? `<div class="brick-live">🧱 Bricked · ${dur(brickMin(b))} so far</div>` : ''}`;
+}
+// Today's short look at what's next; the full week lives in Plan.
+function nextUpCard(d) {
+  if (d !== dateStr()) return '';
+  const now = timeStr(), evs = eventsOn(d).filter(e => !e.game && (!e.start || (e.end || e.start) >= now)).slice(0, 3), soon = todosSoon().slice(0, 3);
+  if (!evs.length && !soon.length) return `<button class="card nextup-empty" data-act="tab" data-tab="plan"><span>📅</span><span class="grow">Nothing else on today</span><span class="link">Planner ›</span></button>`;
+  return `<section class="card nextup"><div class="card-head"><h3>📅 Up next</h3><button class="link" data-act="tab" data-tab="plan">Planner ›</button></div>
+    ${evs.map(e => `<button class="ev" data-act="eventEdit" data-id="${esc(e.id)}"><span class="ev-t">${evTime(e)}</span><span class="grow">${esc(e.title)}${e.where ? `<span class="muted tiny"> · ${esc(e.where)}</span>` : ''}</span></button>`).join('')}
+    ${soon.length ? `<div class="due-head">Due soon</div>${soon.map(todoRow).join('')}` : ''}
+  </section>`;
+}
+
+// ===== FOOD =====
+function screenFood() {
+  const d = ui.date, g = goals(), ents = dayEntries(d), day = db.get('days', d) || {}, v = ui.foodView || 'log';
+  const seg = `<div class="seg food-seg">${[['log', 'Log'], ['foods', 'My foods'], ['recipes', 'Recipes']].map(([k, l]) => `<button class="${v === k ? 'on' : ''}" data-act="foodView" data-v="${k}">${l}</button>`).join('')}</div>`;
+  const bare = html => html.replace(/^\s*<header[\s\S]*?<\/header>/, '');
+  if (v === 'foods') return `${header('Food', `${db.list('foods').length} saved`)}<div class="pad">${seg}</div>${bare(screenFoods())}`;
+  if (v === 'recipes') return `${header('Food', 'Recipes & meal prep')}<div class="pad">${seg}</div>${bare(screenRecipes())}`;
+  return `${dayTop('Food', d, seg)}
   ${gfPrompt()}
   ${prepCard()}
   ${MEALS.map(m => mealCard(m, ents.filter(e => e.meal === m.id), d)).join('')}
   ${waterCard(day, g)}
+  ${cafCard(d)}
+  <div class="spacer"></div>`;
+}
+
+// ===== BODY =====
+function screenBody() {
+  const d = ui.date, day = db.get('days', d) || {};
+  return `${dayTop('Body', d)}
+  ${readinessCard(d)}
   ${sleepCard(d, day)}
+  ${activityRow(d, day)}
   ${bodyCard(day)}
-  ${profile()?.showWeight ? weightCard(Array.from({ length: 30 }, (_, i) => addDays(d, i - 29)), Array.from({ length: 30 }, (_, i) => { const x = parseDate(addDays(d, i - 29)); return `${x.getMonth() + 1}/${x.getDate()}`; })) : ''}
   ${medsCard(d, day)}
+  ${injuryRow(d)}
+  ${brickRow(d)}
   ${feelCard(d)}
   ${gutCard(d)}
-  ${brickRow(d)}
-  ${injuryRow(d)}
-  ${journalCard(day)}
+  ${profile()?.showWeight ? weightCard(Array.from({ length: 30 }, (_, i) => addDays(d, i - 29)), Array.from({ length: 30 }, (_, i) => { const x = parseDate(addDays(d, i - 29)); return `${x.getMonth() + 1}/${x.getDate()}`; })) : ''}
   ${periodRow(d, day)}
+  ${journalCard(day)}
   <div class="spacer"></div>`;
+}
+
+// ===== PLAN =====
+// Like her paper planner: the whole week at once, Monday to Sunday.
+const weekStartOf = d => addDays(d, -((parseDate(d).getDay() + 6) % 7));
+const shortDate = d => parseDate(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+function screenPlan() {
+  const t = dateStr(), ws = addDays(weekStartOf(t), (ui.planWeek || 0) * 7), days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
+  const over = db.list('todos').filter(x => !x.done && x.due && x.due < t).sort((a, b) => a.due.localeCompare(b.due));
+  const open = days.flatMap(d => todosDue(d)).filter(x => !x.done).length;
+  return `${header('Plan', open ? `${open} to-do${open === 1 ? '' : 's'} this week` : 'All caught up this week ✓', `<button class="top-btn" data-act="calendar">${icon('calendar')} Month</button>`)}
+  <div class="pad">
+    <div class="wk-nav"><button class="icon-btn" data-act="planWeek" data-n="-1" aria-label="Last week">‹</button>
+      <button class="wk-label" data-act="planWeek" data-n="0">${ui.planWeek ? `${shortDate(ws)} – ${shortDate(days[6])}` : 'This week'}</button>
+      <button class="icon-btn" data-act="planWeek" data-n="1" aria-label="Next week">›</button></div>
+    ${over.length && !ui.planWeek ? `<section class="card overdue"><div class="due-head">Overdue</div>${over.map(todoRow).join('')}</section>` : ''}
+    ${days.map(planDay).join('')}
+    <div class="btn-row mt"><button class="btn soft grow" data-act="eventEdit">＋ Event</button><button class="btn primary grow" data-act="todoEdit">＋ To-do</button></div>
+    <div class="btn-col mt"><button class="btn soft" data-act="calLinks">🔗 Linked calendars${calLinks().length ? ` (${calLinks().length})` : ''}</button><button class="btn soft" data-act="games">🏀 Games</button></div>
+  </div>
+  <div class="spacer"></div>`;
+}
+function planDay(d) {
+  const t = dateStr(), evs = eventsOn(d), tds = todosDue(d), x = parseDate(d), allDone = tds.length && tds.every(z => z.done);
+  return `<section class="card pday ${d === t ? 'today' : ''} ${d < t ? 'past' : ''}">
+    <button class="pday-h" data-act="planDay" data-d="${d}"><span class="pday-dow">${x.toLocaleDateString(undefined, { weekday: 'short' })}</span><span class="pday-n">${x.getDate()}</span>
+      ${d === t ? '<span class="pday-tag">Today</span>' : ''}${allDone ? '<span class="pday-done">✓ All done</span>' : ''}<span class="grow"></span><span class="chev">›</span></button>
+    ${evs.map(e => `<button class="ev ${e.game ? 'game' : ''}" data-act="${e.game ? 'games' : 'eventEdit'}" data-id="${esc(e.id)}"><span class="ev-t">${e.start ? fmtTime(e.start) : 'All day'}</span><span class="grow">${esc(e.title)}${e.where ? `<span class="muted tiny"> · ${esc(e.where)}</span>` : ''}</span></button>`).join('')}
+    ${tds.map(todoRow).join('')}
+    ${!evs.length && !tds.length ? '<p class="muted small pday-free">Free</p>' : ''}
+  </section>`;
+}
+// Tap a day (in Plan or the month calendar): everything on it, then "Go to day".
+function openDay(d) {
+  const s = openSheet({ title: `${parseDate(d).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}`, body: '<div id="dy"></div>',
+    footer: `<button class="btn soft" data-x="td">＋ To-do</button><button class="btn soft" data-x="ev">＋ Event</button><button class="btn primary grow" data-x="go">Go to day ›</button>` });
+  const draw = () => {
+    const evs = eventsOn(d), tds = todosDue(d), ents = dayEntries(d), tot = sumMacros(ents.map(e => e.macros)), day = db.get('days', d) || {};
+    const logged = [ents.length ? `${fmt(tot.cal)} cal · ${fmt(tot.p)}g protein` : '', day.water ? `${fmt(day.water)} oz water` : '', day.sleepMin != null ? `slept ${fmtSleep(day.sleepMin)}` : '', actsOf(day).length ? actsOf(day).join(', ') : ''].filter(Boolean);
+    s.$('#dy').innerHTML = `<div class="due-head">Schedule</div>${evs.length ? evs.map(e => `<button class="ev ${e.game ? 'game' : ''}" data-act="${e.game ? 'games' : 'eventEdit'}" data-id="${esc(e.id)}"><span class="ev-t">${evTime(e)}</span><span class="grow">${esc(e.title)}${e.where ? `<span class="muted tiny"> · ${esc(e.where)}</span>` : ''}</span></button>`).join('') : '<p class="muted small">Nothing scheduled.</p>'}
+      <div class="due-head">Due</div>${tds.length ? tds.map(todoRow).join('') : '<p class="muted small">Nothing due.</p>'}
+      ${logged.length ? `<div class="due-head">Logged</div><p class="small">${logged.map(esc).join(' · ')}</p>` : ''}`;
+  };
+  live.add(draw);
+  s.onClose = () => live.delete(draw);
+  // Rows here are the same as in Plan (data-act), so pass their taps along.
+  s.on('click', '[data-act]', el => acts[el.dataset.act]?.(el.dataset, el));
+  s.on('click', '[data-x="td"]', () => openTodo(null, d));
+  s.on('click', '[data-x="ev"]', () => openEvent(null, d));
+  s.on('click', '[data-x="go"]', () => { while (sheets.length) sheets[sheets.length - 1].close(); ui.date = d; go('today'); });
+  draw();
+}
+// Open sheets that show live data redraw when anything changes.
+const live = new Set();
+db.onChange(() => live.forEach(f => f()));
+
+// ---------- caffeine log ----------
+function cafCard(d) {
+  const list = dayEntries(d).filter(hasCaf), total = list.reduce((s, e) => s + cafOf(e), 0);
+  return `<section class="card caf-card"><div class="card-head"><h3>⚡ Caffeine</h3><span class="muted">${total ? `<b class="tx">${fmt(total)}</b> mg` : ''}</span></div>
+    ${list.length ? list.map(e => `<button class="ev" data-act="editEntry" data-id="${e.id}"><span class="ev-t">${e.time ? fmtTime(e.time) : ''}</span><span class="grow">${esc(e.name)}</span><span class="muted small">${cafOf(e) ? fmt(cafOf(e)) + ' mg' : ''}</span></button>`).join('') : '<p class="muted small">None logged.</p>'}
+    <button class="btn soft full mt" data-act="cafLog">⚡ Log caffeine</button></section>`;
+}
+const CAF_IDEAS = [['Celsius', 200, 10], ['Starbucks Refresher (grande)', 45, 90], ['Energy drink', 160, 0], ['Pre-workout', 150, 0], ['Iced tea', 30, 0], ['Soda', 35, 140]];
+// Recent caffeine drinks re-log in one tap; anything else is a name and mg.
+function openCaf(date = ui.date) {
+  const seen = new Map();
+  db.list('entries').filter(e => cafOf(e) > 0).sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || ''))).forEach(e => { if (!seen.has(e.name)) seen.set(e.name, e); });
+  const recent = [...seen.values()].slice(0, 6);
+  const s = openSheet({
+    title: '⚡ Caffeine',
+    body: `${recent.length ? `<div class="due-head">Again</div><div class="caf-recent">${recent.map(e => `<button class="row" data-x="again" data-id="${e.id}"><div class="row-main"><div class="row-name">${esc(e.name)}</div><div class="row-sub">${fmt(cafOf(e))} mg · ${fmt(e.macros.cal)} cal</div></div><span class="row-plus">＋</span></button>`).join('')}</div>` : ''}
+      <div class="due-head">Something else</div>
+      <div class="chips">${CAF_IDEAS.map(([n, mg, cal]) => `<button class="chip sm" data-x="idea" data-n="${esc(n)}" data-mg="${mg}" data-cal="${cal}">${esc(n)}</button>`).join('')}</div>
+      <div class="field mt"><label>What</label><input id="cn" placeholder="Drink name" autocomplete="off"></div>
+      <div class="grid2"><div class="field"><label>Caffeine (mg)</label><input id="cm" inputmode="decimal" placeholder="0"></div>
+      <div class="field"><label>Calories</label><input id="cc" inputmode="decimal" placeholder="0"></div></div>
+      <p class="muted tiny">Ideas are typical amounts. Check the cup or label and change them if needed.</p>`,
+    footer: `<button class="btn primary grow" data-x="save">Log it</button>`,
+  });
+  const meal = defaultMeal();
+  s.on('click', '[data-x="again"]', el => {
+    const src = db.get('entries', el.dataset.id);
+    db.put('entries', { ...src, id: uid(), date, meal, time: date === dateStr() ? timeStr() : defaultTime(date, meal), pcs: src.pcs });
+    s.close(); buzz(); toast(`⚡ ${src.name} logged`);
+  });
+  s.on('click', '[data-x="idea"]', el => { s.$('#cn').value = el.dataset.n; s.$('#cm').value = el.dataset.mg; s.$('#cc').value = el.dataset.cal; });
+  s.on('click', '[data-x="save"]', () => {
+    const caf = num(s.$('#cm').value), cal = num(s.$('#cc').value);
+    if (!(caf > 0)) return toast('Add the mg');
+    db.put('entries', { id: uid(), date, kind: 'quick', time: date === dateStr() ? timeStr() : defaultTime(date, meal), name: s.$('#cn').value.trim() || 'Caffeine', grams: null, meal, macros: { cal, p: 0, c: 0, f: 0, fiber: 0, sugar: 0, sodium: 0, caf } });
+    s.close(); buzz(); toast(`⚡ ${fmt(caf)} mg logged`);
+  });
 }
 
 // ---------- goal rings ----------
@@ -404,9 +547,14 @@ function goalRings(d, day, t, g) {
 }
 // Remembers which rings were already closed so each one celebrates once a day.
 function checkRings() {
-  if (ui.tab !== 'today' || ui.date !== dateStr()) return;
+  if (ui.date !== dateStr()) return;
   const d = ui.date, rs = ringsFor(d), now = rs.filter(r => r.v >= 1).map(r => r.k);
   ui.ringSeen ||= {};
+  // Reaching the calorie goal gets its own moment, once a day.
+  const fed = sumMacros(dayEntries(d).map(e => e.macros)).cal >= goals().cal * 0.9;
+  if (fed && ui.fedSeen === false) setTimeout(() => celebrate('Calorie goal hit ✓ Fueled'), 50);
+  ui.fedSeen = ui.fedDay === d ? (ui.fedSeen || fed) : fed;
+  ui.fedDay = d;
   const before = ui.ringSeen[d];
   ui.ringSeen[d] = now;
   if (!before) return;
@@ -418,20 +566,28 @@ function checkRings() {
 function celebrate(msg, big = false) {
   if (msg) toast(msg);
   buzz();
+  if (document.querySelector('canvas.confetti')) return;
   const cv = document.createElement('canvas');
   cv.className = 'confetti';
-  const W = cv.width = innerWidth * 2, H = cv.height = innerHeight * 2, x = cv.getContext('2d');
+  const k = Math.min(devicePixelRatio || 1, 2), W = innerWidth, H = innerHeight;
+  cv.width = W * k; cv.height = H * k;
+  const x = cv.getContext('2d');
   document.body.appendChild(cv);
   const cols = ['#7b5cd6', '#b9a4f5', '#ffd166', '#06d6a0', '#ef476f', '#ffffff'];
-  const ps = Array.from({ length: big ? 160 : 70 }, () => ({ x: W / 2 + (Math.random() - 0.5) * W * 0.3, y: H * 0.35, vx: (Math.random() - 0.5) * 28, vy: -Math.random() * 34 - 10,
-    s: 8 + Math.random() * 10, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.4, c: cols[Math.random() * cols.length | 0] }));
-  let f = 0;
-  (function step() {
-    x.clearRect(0, 0, W, H);
-    ps.forEach(p => { p.vy += 1.1; p.vx *= 0.985; p.x += p.vx; p.y += p.vy; p.r += p.vr;
-      x.save(); x.translate(p.x, p.y); x.rotate(p.r); x.fillStyle = p.c; x.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); x.restore(); });
-    if (++f < 110) requestAnimationFrame(step); else cv.remove();
-  })();
+  const ps = Array.from({ length: big ? 110 : 55 }, () => ({ x: W / 2 + (Math.random() - 0.5) * W * 0.3, y: H * 0.35, vx: (Math.random() - 0.5) * 14, vy: -Math.random() * 17 - 5,
+    s: 5 + Math.random() * 5, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.4, c: cols[Math.random() * cols.length | 0] }));
+  let t0 = 0, last = 0;
+  // Starts on the next frame so it doesn't fight the screen redraw.
+  requestAnimationFrame(function step(ts) {
+    t0 ||= ts; const dt = Math.min(2, (ts - (last || ts)) / 16.7 || 1); last = ts;
+    x.setTransform(1, 0, 0, 1, 0, 0); x.clearRect(0, 0, cv.width, cv.height);
+    for (const p of ps) {
+      p.vy += 0.55 * dt; p.vx *= 0.985; p.x += p.vx * dt; p.y += p.vy * dt; p.r += p.vr * dt;
+      const c = Math.cos(p.r) * k, s = Math.sin(p.r) * k;
+      x.setTransform(c, s, -s, c, p.x * k, p.y * k); x.fillStyle = p.c; x.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2);
+    }
+    if (ts - t0 < 1900) requestAnimationFrame(step); else cv.remove();
+  });
 }
 // A small tap of haptics: vibrate() on Android, and on iPhone (Safari 18+)
 // toggling a hidden switch makes the phone tick.
@@ -630,8 +786,8 @@ function gameBanner(date) {
     ${plan ? `<span class="gb-tap">${ui.gameTip ? '✕' : "🍽️ What's next"}</span>` : ''}</div>
     ${plan && ui.gameTip ? gameNudge(date, g) : ''}</section>`;
   }
-  const pp = date === dateStr() ? GAMES.find(x => x.postponed && x.date >= addDays(date, -3) && x.date <= addDays(date, 7)) : null;
-  const ppNote = pp ? `<button class="pp-note" data-act="games">⏸️ ${vsAt(pp)} ${esc(pp.opp)} (${parseDate(pp.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}) was postponed. New date not set yet.</button>` : '';
+  const pp = date === dateStr() ? GAMES.find(x => x.postponed && x.date >= addDays(date, -3) && x.date <= addDays(date, 7) && !ppHidden().includes(x.key)) : null;
+  const ppNote = pp ? `<div class="pp-note"><button class="grow" data-act="games">${vsAt(pp)} ${esc(pp.opp)} (${shortDate(pp.date)}) was postponed. New date not set yet.</button><button class="pp-x" data-act="ppHide" data-k="${esc(pp.key)}" aria-label="Hide">✕</button></div>` : '';
   const n = nextGame(addDays(date, 1));
   if (!n || date < dateStr()) return ppNote;
   const days = Math.round((parseDate(n.date) - parseDate(date)) / 864e5);
@@ -1502,12 +1658,14 @@ const TOUR = [
   ['#fab', 'Log food', 'Search, scan a barcode, use a recipe, or snap a photo of your plate.'],
   ['.rings', 'Daily rings', 'Protein, water, sleep and meds. Tap one to jump to it.'],
   ['.game-banner, .next-game', 'Games', 'Your next game shows up here. On game day, tap it to see what to eat next.'],
-  ['.sleep-card', 'Sleep', "Log last night and see tonight's bedtime, planned around your wake-up and games."],
+  ['.nextup, .nextup-empty', 'Up next', "What's left on today's schedule and what's due soon."],
+  ['.quick', 'Quick log', 'Water, caffeine, Brick and anything that hurts, in one tap.'],
   ['.ask-pill', 'Ask Pulse', 'Ask about your sleep, food, stomach or games. Answers come from what you log. Tap the mic to talk.'],
-  ['[data-tab="foods"]', 'Foods', "Everything you've eaten, plus your own foods. Easy to re-log."],
-  ['[data-tab="recipes"]', 'Recipes', 'Save recipes and meal preps, and see how many containers are left.'],
+  ['[data-tab="food"]', 'Food', 'Meals, water and caffeine for the day, plus your saved foods and recipes.'],
+  ['[data-tab="plan"]', 'Plan', 'Your week like a planner: practices, class, games and everything due.'],
+  ['[data-tab="body"]', 'Body', 'Sleep, recovery, training, meds, anything that hurts, and your journal.'],
   ['[data-tab="trends"]', 'Trends', 'Your week and month, what helps you recover, and what might bother your stomach.'],
-  ['[data-tab="me"]', 'Me', 'Goals, meds, wake-up times and reminders. You can replay this tour here too.'],
+  ['.me-btn', 'Me', 'Goals, meds, wake-up times and reminders. You can replay this tour here too.'],
 ];
 function startTour() {
   if (document.querySelector('.tour')) return;
@@ -1548,7 +1706,7 @@ const tourDue = () => DEMO ? !localStorage.getItem('pulseTourDemo') : !NEW && !p
 
 // ---------- journal ----------
 function journalCard(day) {
-  return `<section class="card tap" data-act="journal">
+  return `<section class="card tap journal-card" data-act="journal">
     <div class="card-head"><h3>📓 Journal <span class="lock">🔒</span></h3><span class="link">${day.notes ? 'Edit' : 'Write'}</span></div>
     ${day.notes ? `<p class="journal-txt">${esc(day.notes)}</p>` : day.photos?.length ? '' : `<p class="muted small">Practice, mood, anything. Just for you.</p>`}
     ${day.photos?.length ? `<div class="j-photos">${day.photos.slice(0, 4).map(p => `<img src="${p.img}" alt="">`).join('')}</div>` : ''}
@@ -1711,12 +1869,11 @@ function waterCard(day, g) {
   return `<section class="card water">
     <div class="card-head"><h3>💧 Water</h3><button class="link muted" data-act="waterAmt"><b class="tx">${fmt(w)}</b> / ${fmt(g.water)} oz</button></div>
     <div class="w-track"><i style="width:${pct}%"></i></div>
-    <div class="w-btns"><button data-act="water" data-oz="-8" aria-label="Remove 8 oz">−</button>
-      <button data-act="water" data-oz="8">+8</button><button data-act="water" data-oz="16">+16</button><button data-act="water" data-oz="32">+32</button><button data-act="waterAmt" aria-label="Type an amount">✏️</button></div>
-    ${cafToday(day) ? `<div class="caf-row">⚡ <b>${fmt(cafToday(day))} mg</b> caffeine ${day.id === dateStr() ? 'today' : ''}</div>` : ''}
+    <div class="w-btns"><button data-act="water" data-oz="-8" aria-label="Remove 8 oz">−8</button>
+      <button data-act="water" data-oz="8">+8</button><button data-act="water" data-oz="16">+16</button><button data-act="water" data-oz="32">+32</button>
+      <button data-act="waterAmt" aria-label="Type an amount"><svg class="w-ic" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg></button></div>
   </section>`;
 }
-const cafToday = day => dayEntries(day.id || ui.date).reduce((s, e) => s + cafOf(e), 0);
 // Type any amount: add it, take it away, or set the day's total.
 function openWater() {
   const cur = db.get('days', ui.date)?.water || 0;
@@ -2180,10 +2337,15 @@ const acts = {
   copyMeal: d => copyMeal(d.meal),
   water: d => addWater(+d.oz),
   waterAmt: () => openWater(),
-  schedule: () => openSchedule(),
+  schedule: () => go('plan'),
+  planWeek: d => { ui.planWeek = +d.n ? (ui.planWeek || 0) + +d.n : 0; render(); },
+  planDay: d => openDay(d.d),
+  foodView: d => { ui.foodView = d.v; render(); },
+  cafLog: () => openCaf(),
+  ppHide: d => { try { localStorage.setItem('pulsePPHidden', JSON.stringify([...ppHidden(), d.k])); } catch {} render(); },
   eventEdit: d => openEvent(d.id || null),
   todoEdit: d => openTodo(d.id || null),
-  todoDone: d => toggleTodo(d.id),
+  todoDone: (d, el) => toggleTodo(d.id, el),
   games: () => openGames(),
   calLinks: () => openCalLinks(),
   brickStart: () => { if (!brickNow()) { db.put('brick', { id: uid(), start: Date.now(), end: null }); buzz(); toast('🧱 Bricked. Timer started'); } },
@@ -2260,7 +2422,10 @@ const acts = {
   getIdeas: () => getIdeas(),
   gameTip: () => { ui.gameTip = !ui.gameTip; buzz(); queueRender(); },
   wrapped: d => openWrapped(d.from || addDays(dateStr(), -7), d.to || addDays(dateStr(), -1)),
-  jump: d => { const el = $('.card.' + d.to); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } },
+  jump: d => {
+    go(['meal', 'water'].includes(d.to) ? 'food' : 'body');
+    requestAnimationFrame(() => { const el = $('.card.' + d.to); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); } });
+  },
 };
 const inputs = {
   foodQ: el => { ui.foodQ = el.value; $('#foodList').innerHTML = foodListHTML(); },
@@ -2291,7 +2456,7 @@ document.addEventListener('change', e => {
 
 // Swipe left/right on Today to change days.
 let touch = null;
-main.addEventListener('touchstart', e => { if (ui.tab === 'today' && e.touches.length === 1) touch = [e.touches[0].clientX, e.touches[0].clientY]; }, { passive: true });
+main.addEventListener('touchstart', e => { if ((ui.tab === 'today' || ui.tab === 'body' || (ui.tab === 'food' && (ui.foodView || 'log') === 'log')) && e.touches.length === 1) touch = [e.touches[0].clientX, e.touches[0].clientY]; }, { passive: true });
 main.addEventListener('touchend', e => {
   if (!touch) return;
   const dx = e.changedTouches[0].clientX - touch[0], dy = e.changedTouches[0].clientY - touch[1];
@@ -3132,7 +3297,7 @@ function openCalendar() {
     body: `<div class="cal-nav"><button class="icon-btn" data-x="prev" aria-label="Previous month">‹</button><b id="calTitle"></b><button class="icon-btn" data-x="next" aria-label="Next month">›</button></div>
       <div class="cal-grid cal-wd">${['S', 'M', 'T', 'W', 'T', 'F', 'S'].map(d => `<span>${d}</span>`).join('')}</div>
       <div class="cal-grid" id="calGrid"></div>
-      <div class="cal-legend"><span><i class="lg on"></i>On target</span><span><i class="lg under"></i>Under</span><span><i class="lg over"></i>Over</span><span><i class="mk gut"></i>Stomach</span><span><i class="mk feel"></i>Felt off</span><span><i class="mk sleep"></i>Recovery logged</span>${periodOn() ? '<span><i class="mk period"></i>Period</span>' : ''}<span>🏀 Practice</span><span>🎯 Shoot-around</span><span>🏋️ Weights</span><span>💪 Workout</span><span><i class="lg game"></i>Game</span></div>
+      <div class="cal-legend"><span><i class="lg on"></i>On target</span><span><i class="lg under"></i>Under</span><span><i class="lg over"></i>Over</span><span><i class="mk gut"></i>Stomach</span><span><i class="mk feel"></i>Felt off</span><span><i class="mk sleep"></i>Recovery logged</span>${periodOn() ? '<span><i class="mk period"></i>Period</span>' : ''}<span><i class="mk due"></i>Something due</span><span>🏀 Practice</span><span>🎯 Shoot-around</span><span>🏋️ Weights</span><span>💪 Workout</span><span><i class="lg game"></i>Game</span></div>
       <div id="calSum"></div>
       <div id="calGames"></div>`,
   });
@@ -3157,7 +3322,7 @@ function openCalendar() {
       const gm = gameOn(ds), acts = actsOf(day);
       cells += `<button class="cal-day ${cls} ${ds === today ? 'today' : ''} ${ds === ui.date ? 'sel' : ''} ${ds > today ? 'future' : ''} ${gm ? 'game' : ''}" data-x="day" data-d="${ds}">
         <span class="cal-n">${d}</span>${gm ? `<img class="cal-logo" src="${teamLogo(gm)}" alt="${esc(gm.opp)}">` : ''}<span class="cal-c">${t ? (t.cal >= 1000 ? (t.cal / 1000).toFixed(1) + 'k' : Math.round(t.cal)) : gm ? '' : acts.includes('practice') ? '🏀' : acts.includes('weights') ? '🏋️' : acts.includes('workout') ? '💪' : acts.includes('shoot') ? '🎯' : ''}</span>
-        <span class="cal-mk">${eps[ds] ? '<i class="mk gut"></i>' : ''}${offs.has(ds) ? '<i class="mk feel"></i>' : ''}${day && (day.sleepMin != null || day.recovery != null) ? '<i class="mk sleep"></i>' : ''}${day?.period && periodOn() ? '<i class="mk period"></i>' : ''}</span></button>`;
+        <span class="cal-mk">${eps[ds] ? '<i class="mk gut"></i>' : ''}${offs.has(ds) ? '<i class="mk feel"></i>' : ''}${day && (day.sleepMin != null || day.recovery != null) ? '<i class="mk sleep"></i>' : ''}${day?.period && periodOn() ? '<i class="mk period"></i>' : ''}${todosDue(ds).some(x => !x.done) ? '<i class="mk due"></i>' : ''}</span></button>`;
     }
     s.$('#calGrid').innerHTML = cells;
     const avg = k => logged.length ? logged.reduce((a, t) => a + t[k], 0) / logged.length : 0;
@@ -3173,7 +3338,7 @@ function openCalendar() {
   const shift = n => { const d = parseDate(month + '-01'); d.setMonth(d.getMonth() + n); month = dateStr(d).slice(0, 7); draw(); };
   s.on('click', '[data-x="prev"]', () => shift(-1));
   s.on('click', '[data-x="next"]', () => shift(1));
-  s.on('click', '[data-x="day"]', el => { s.close(); ui.date = el.dataset.d; go('today'); });
+  s.on('click', '[data-x="day"]', el => openDay(el.dataset.d));
   draw();
 }
 
@@ -3504,6 +3669,7 @@ function startApp({ first = false } = {}) {
 }
 
 // ---------- games list (editable) ----------
+const ppHidden = () => { try { return JSON.parse(localStorage.getItem('pulsePPHidden') || '[]'); } catch { return []; } };
 function openGames() {
   const t = dateStr();
   const s = openSheet({
@@ -3627,49 +3793,6 @@ function todoRow(t) {
   return `<div class="todo ${t.done ? 'done' : ''}"><button class="todo-box" data-act="todoDone" data-id="${t.id}" aria-label="Done">${t.done ? '✓' : ''}</button>
     <button class="todo-main" data-act="todoEdit" data-id="${t.id}"><b>${esc(t.title)}</b><span class="muted tiny">${[t.cls, t.due ? dueTxt(t) : ''].filter(Boolean).map(esc).join(' · ')}</span></button></div>`;
 }
-function scheduleCard(d) {
-  if (d !== dateStr()) return '';
-  const now = timeStr(), evs = eventsOn(d).filter(e => !e.end || e.end >= now || !e.start), soon = todosSoon();
-  const tom = !evs.length ? eventsOn(addDays(d, 1)) : [];
-  return `<section class="card sched-card">
-    <div class="card-head"><h3>📅 Schedule</h3><button class="link" data-act="schedule">Week ›</button></div>
-    ${evs.length ? evs.slice(0, 5).map(e => `<button class="ev ${e.game ? 'game' : ''}" data-act="${e.game ? 'games' : 'eventEdit'}" data-id="${esc(e.id)}"><span class="ev-t">${evTime(e)}</span><span class="grow">${esc(e.title)}${e.where ? `<span class="muted tiny"> · ${esc(e.where)}</span>` : ''}</span></button>`).join('')
-      : `<p class="muted small">${tom.length ? `Nothing else today. Tomorrow starts with ${esc(tom[0].title)} at ${tom[0].start ? fmtTime(tom[0].start) : 'all day'}.` : 'Nothing on the schedule today.'}</p>`}
-    ${soon.length ? `<div class="due-head">Due soon</div>${soon.slice(0, 4).map(todoRow).join('')}` : ''}
-    <div class="btn-row mt"><button class="btn soft grow" data-act="eventEdit">＋ Event</button><button class="btn soft grow" data-act="todoEdit">＋ To-do</button></div>
-  </section>`;
-}
-function openSchedule(start = dateStr()) {
-  let day = start;
-  const s = openSheet({
-    title: '📅 Schedule', full: true,
-    body: `<div class="wk" id="wk"></div><div id="sd"></div>
-      <h4 class="sec">To-dos</h4><div id="tl"></div>
-      <div class="btn-col mt"><button class="btn soft" data-x="links">🔗 Linked calendars${calLinks().length ? ` (${calLinks().length})` : ''}</button><button class="btn soft" data-x="games">🏀 Games</button></div>`,
-    footer: `<button class="btn soft grow" data-x="ev">＋ Event</button><button class="btn primary grow" data-x="td">＋ To-do</button>`,
-  });
-  const draw = () => {
-    const t = dateStr();
-    s.$('#wk').innerHTML = Array.from({ length: 14 }, (_, i) => addDays(t, i - 1)).map(d => { const x = parseDate(d); return `<button class="wk-d ${d === day ? 'on' : ''} ${d === t ? 'today' : ''}" data-x="day" data-d="${d}"><span>${x.toLocaleDateString(undefined, { weekday: 'narrow' })}</span><b>${x.getDate()}</b>${eventsOn(d).length || todosDue(d).some(x => !x.done) ? '<i></i>' : ''}</button>`; }).join('');
-    const evs = eventsOn(day), tds = todosDue(day);
-    s.$('#sd').innerHTML = `<h4 class="sec">${fmtDay(day)}</h4>` + (evs.length ? evs.map(e => `<button class="ev ${e.game ? 'game' : ''}" data-x="${e.game ? 'games' : 'evEdit'}" data-id="${esc(e.id)}"><span class="ev-t">${evTime(e)}</span><span class="grow">${esc(e.title)}<span class="muted tiny">${e.where ? ' · ' + esc(e.where) : ''}${e.cal ? ' · ' + esc(e.cal) : ''}</span></span></button>`).join('') : '<p class="muted small">Nothing scheduled.</p>')
-      + (tds.length ? tds.map(todoRow).join('') : '');
-    const open = db.list('todos').filter(x => !x.done).sort((a, b) => (a.due || '9').localeCompare(b.due || '9'));
-    const done = db.list('todos').filter(x => x.done && x.doneAt > Date.now() - 7 * 864e5);
-    s.$('#tl').innerHTML = (open.length ? open.map(todoRow).join('') : '<p class="muted small">All caught up.</p>') + (done.length ? `<p class="muted tiny mt">Done this week: ${done.length}</p>` : '');
-  };
-  s.redraw = draw;
-  ui.schedSheet = s;
-  s.onClose = () => { ui.schedSheet = null; };
-  s.on('click', '[data-x="day"]', el => { day = el.dataset.d; draw(); });
-  s.on('click', '[data-x="ev"]', () => openEvent(null, day));
-  s.on('click', '[data-x="evEdit"]', el => openEvent(el.dataset.id, day));
-  s.on('click', '[data-x="td"]', () => openTodo(null, day));
-  s.on('click', '[data-x="links"]', () => openCalLinks());
-  s.on('click', '[data-x="games"]', () => openGames());
-  draw();
-}
-db.onChange(() => ui.schedSheet?.redraw());
 function findEvent(id) {
   return db.get('events', id) || calLinks().flatMap(l => (calCache(l.id)?.events || []).map(e => ({ ...e, cal: l.name }))).find(e => e.id === id) || null;
 }
@@ -3726,11 +3849,24 @@ function openTodo(id, date) {
   });
   if (!t) s.$('#tt').focus();
 }
-function toggleTodo(id) {
+function toggleTodo(id, el) {
   const t = db.get('todos', id);
   if (!t) return;
-  db.put('todos', { ...t, done: !t.done, doneAt: t.done ? null : Date.now() });
+  if (!t.done && el) { sparkle(el); el.classList.add('pop'); }
+  // A beat for the check to land before the list redraws.
+  setTimeout(() => db.put('todos', { ...t, done: !t.done, doneAt: t.done ? null : Date.now() }), t.done ? 0 : 260);
   if (!t.done) buzz();
+}
+// A small burst from a button: the quick "done" feeling, without full confetti.
+function sparkle(el) {
+  const r = el.getBoundingClientRect(), cols = ['#7b5cd6', '#b9a4f5', '#ffd166', '#06d6a0', '#ef476f'];
+  for (let i = 0; i < 12; i++) {
+    const p = document.createElement('i'), a = (i / 12) * Math.PI * 2, dist = 26 + Math.random() * 18;
+    p.className = 'spark';
+    p.style.cssText = `left:${r.left + r.width / 2}px;top:${r.top + r.height / 2}px;background:${cols[i % cols.length]};--dx:${Math.cos(a) * dist}px;--dy:${Math.sin(a) * dist}px`;
+    document.body.appendChild(p);
+    setTimeout(() => p.remove(), 650);
+  }
 }
 function openCalLinks() {
   const s = openSheet({
@@ -3950,7 +4086,11 @@ const WHATS_NEW = [
   ['allOn', 'All reminders on/off', 'One tick for every reminder'],
   ['water', 'Water: any amount', 'Type oz or ml, add, take away or set the total'],
   ['caf', 'Caffeine', 'mg box on foods and quick add, daily total, late heads-up'],
-  ['sched', 'Schedule', 'Week view with practices, class, games and to-dos'],
+  ['cafLog', 'Caffeine log', 'One-tap re-log, plus a list in Food'],
+  ['checks', 'Check-offs', 'To-dos burst when checked; rings and calories get a ✓'],
+  ['layout', 'New layout', 'Short Today; Food, Plan, Body tabs; Me is her initial'],
+  ['sched', 'Plan: week planner', 'Whole week like a planner; tap a day for details'],
+  ['month', 'Month calendar', "Tap a day: what's due, then Go to day"],
   ['links', 'Linked calendars', 'Paste a Teamworks, Google, iCloud or Canvas link'],
   ['todo', 'To-dos', 'Due date, time and class; "Due soon" on Today'],
   ['journal', 'Journal photos', 'Add photos; Ask Pulse can read them'],
@@ -3965,11 +4105,15 @@ function devShow(k) {
   ({
     nNotify: () => showNudge('notify'), nHealth: () => showNudge('health'), nCal: () => showNudge('cal'),
     allOn: () => scrollTo2('me', '.all-row'),
-    water: () => { ui.date = dateStr(); go('today'); setTimeout(openWater, 200); },
+    water: () => { ui.date = dateStr(); ui.foodView = 'log'; scrollTo2('food', '.card.water'); setTimeout(openWater, 700); },
+    layout: () => { ui.date = dateStr(); go('today'); },
+    month: () => openCalendar(),
+    cafLog: () => { ui.date = dateStr(); ui.foodView = 'log'; scrollTo2('food', '.caf-card'); setTimeout(openCaf, 700); },
+    checks: () => { ui.planWeek = 0; scrollTo2('plan', '.pday.today'); },
     caf: () => openFoodForm({ prefill: { name: 'Celsius', servingG: 355, cal: 10, caf: 200, servingLabel: '1 can' } }),
-    sched: () => openSchedule(), links: () => openCalLinks(), todo: () => openTodo(null, addDays(dateStr(), 1)),
-    journal: () => openJournal(dateStr()),
-    brick: () => { ui.date = dateStr(); scrollTo2('today', '.brick-card'); },
+    sched: () => { ui.planWeek = 0; go('plan'); }, links: () => openCalLinks(), todo: () => openTodo(null, addDays(dateStr(), 1)),
+    journal: () => { ui.date = dateStr(); scrollTo2('body', '.journal-card'); setTimeout(() => openJournal(dateStr()), 700); },
+    brick: () => { ui.date = dateStr(); scrollTo2('body', '.brick-card'); },
     brickAuto: () => openBrickSetup(),
     injury: () => openInjury(null),
     injTrend: () => scrollTo2('trends', '.inj-sum'),
