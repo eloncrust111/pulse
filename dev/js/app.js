@@ -55,7 +55,7 @@ const OFF_LEVELS = [
 const DEFAULT_GOALS = { cal: 2400, p: 140, c: 300, f: 75, fiber: 30, water: 100 };
 // This copy of Pulse is set up for Carly. Set to null to go back to asking each person.
 const OWNER = { name: 'Carly', number: '11', glutenFree: true };
-const APP_VERSION = '1.4';
+const APP_VERSION = '1.5';
 // Developer mode: the test build lives in /dev/ with its own sample data.
 // The live app sends a phone there once the hidden switch in Me is turned on.
 const DEV = location.pathname.includes('/dev/');
@@ -157,6 +157,16 @@ function confirmSheet(msg, yes = 'Delete', danger = true) {
   });
 }
 
+// The Brick device: a light gray rounded square with corner marks and BRICK on it.
+const BRICK = `<svg class="brick-logo" viewBox="0 0 40 40" aria-hidden="true"><rect x="2.5" y="2.5" width="35" height="35" rx="9" fill="#dcdde0" stroke="#bfc1c5"/><path d="M9.5 14.5v-3a2 2 0 0 1 2-2h3M25.5 9.5h3a2 2 0 0 1 2 2v3M30.5 25.5v3a2 2 0 0 1-2 2h-3M14.5 30.5h-3a2 2 0 0 1-2-2v-3" stroke="#909297" stroke-width="2" fill="none" stroke-linecap="round"/><text x="20" y="23" text-anchor="middle" font-size="7.2" font-weight="600" font-family="ui-monospace,Menlo,monospace" fill="#5a5c61" letter-spacing=".4">BRICK</text></svg>`;
+// A matching emoji for foods without a photo.
+const FOOD_EMOJI = [[/shake|smoothie/, '🥤'], [/celsius|energy|red bull|monster|soda|coke|sprite|sparkling/, '🥫'], [/juice/, '🧃'], [/bean|lentil|chickpea|hummus/, '🫘'], [/egg/, '🥚'], [/banana/, '🍌'], [/apple/, '🍎'], [/strawberr|berr/, '🍓'], [/grape/, '🍇'], [/orange|clementine|mandarin/, '🍊'], [/pineapple/, '🍍'], [/mango/, '🥭'], [/peach/, '🍑'], [/watermelon|melon/, '🍉'], [/cherr/, '🍒'], [/lemon|lime/, '🍋'], [/avocado|guac/, '🥑'],
+  [/broccoli/, '🥦'], [/carrot/, '🥕'], [/corn/, '🌽'], [/salad|lettuce|spinach|greens|kale/, '🥗'], [/sweet potato|potato|fries/, '🥔'], [/tomato/, '🍅'], [/cucumber|pickle/, '🥒'], [/pepper/, '🫑'], [/mushroom/, '🍄'],
+  [/sandwich|sub\b|wrap|panini/, '🥪'], [/burger/, '🍔'], [/pizza/, '🍕'], [/taco|burrito|quesadilla/, '🌮'], [/sushi/, '🍣'], [/pasta|spaghetti|noodle|mac/, '🍝'], [/rice|bowl/, '🍚'], [/ramen|soup|chili|stew/, '🍜'],
+  [/salmon|tuna|fish|shrimp/, '🐟'], [/chicken|turkey/, '🍗'], [/steak|beef|bacon|pork|ham/, '🥩'], [/bread|toast|bagel|bun/, '🍞'], [/oat|cereal|granola|chex|muesli/, '🥣'], [/pancake|waffle/, '🥞'], [/cracker|pretzel/, '🍘'],
+  [/chip|crisp/, '🥨'], [/popcorn/, '🍿'], [/cookie/, '🍪'], [/chocolate|m&m|candy|reese/, '🍫'], [/ice cream|froyo/, '🍦'], [/cake|muffin|brownie/, '🧁'], [/donut|doughnut/, '🍩'], [/peanut butter|almond butter|\bnut|almond|cashew/, '🥜'],
+  [/cheese/, '🧀'], [/yogurt|yoghurt/, '🥛'], [/milk/, '🥛'], [/butter/, '🧈'], [/honey/, '🍯'], [/shake|smoothie/, '🥤'], [/protein bar|bar\b/, '🍫'], [/celsius|energy|red bull|monster|soda|coke|sprite/, '🥫'], [/juice/, '🧃'], [/tea\b|matcha/, '🍵'], [/water|gatorade|electrolyte|liquid iv/, '💧']];
+const foodEmoji = (name, fallback) => FOOD_EMOJI.find(([re]) => re.test(String(name || '').toLowerCase()))?.[1] || fallback;
 const thumb = (photo, fallback) => photo ? `<img class="thumb" src="${photo}" alt="">` : `<span class="thumb ph">${fallback}</span>`;
 const IC = {
   camera: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
@@ -317,10 +327,10 @@ const queueRender = () => { if (!renderQueued) { renderQueued = true; queueMicro
 function go(tab) { ui.tab = tab; render(); window.scrollTo(0, 0); }
 
 function header(title, sub = '', extra = '') {
-  return `<header class="top"><div class="top-row"><div><h1>${title}</h1>${sub ? `<div class="top-sub">${sub}</div>` : ''}</div><div class="top-r">${extra}${title === 'Me' ? '' : meBtn()}</div></div></header>`;
+  return `<header class="top"><div class="top-row"><div><h1>${title}</h1>${sub ? `<div class="top-sub">${sub}</div>` : ''}</div><div class="top-r">${extra}${title === 'Settings' ? '' : meBtn()}</div></div></header>`;
 }
 // Her initial in the corner opens Me (settings, goals, reminders).
-const meBtn = () => `<button class="me-btn" data-act="tab" data-tab="me" aria-label="Me">${esc((firstName() || 'M')[0].toUpperCase())}</button>`;
+const meBtn = () => `<button class="me-btn" data-act="tab" data-tab="me" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/><circle cx="12" cy="12" r="6.6"/></svg></button>`;
 function dateNav(d) {
   return `<div class="datenav">
       <button class="dn-btn" data-act="day" data-n="-1" aria-label="Previous day">‹</button>
@@ -373,14 +383,41 @@ function screenToday() {
 }
 function quickRow(d) {
   const b = d === dateStr() ? brickNow() : null;
+  const q = (k, ico, label, cls = '') => `<button data-act="qgo" data-k="${k}" class="${cls}"><span>${ico}</span>${label}</button>`;
   return `<section class="quick">
-    <button data-act="add"><span>🍽️</span>Food</button>
-    <button data-act="water" data-oz="8"><span>💧</span>+8 oz</button>
-    <button data-act="cafLog"><span>⚡</span>Caffeine</button>
-    <button data-act="${b ? 'brickStop' : 'brickStart'}" class="${b ? 'on' : ''}"><span>🧱</span>${b ? 'Unbrick' : 'Brick'}</button>
-    <button data-act="injuryLog"><span>🩹</span>Hurt</button>
+    ${q('food', '🍽️', 'Food')}${q('water', '💧', 'Water')}${q('caf', '⚡', 'Caffeine')}${q('sleep', '😴', 'Sleep')}
+    ${q('meds', '💊', 'Meds')}${q('train', '🏀', 'Training')}${q('brick', BRICK, b ? 'Unbrick' : 'Brick', b ? 'on' : '')}${q('hurt', '🩹', 'Hurt')}
+    ${q('gut', '🤢', 'Stomach')}${q('feel', '😵‍💫', 'Feeling off')}${q('journal', '📓', 'Journal')}${q('todo', '✅', 'To-do')}
   </section>
-  ${b ? `<div class="brick-live">🧱 Bricked · ${dur(brickMin(b))} so far</div>` : ''}`;
+  ${b ? `<div class="brick-live">${BRICK} Bricked · ${dur(brickMin(b))} so far</div>` : ''}`;
+}
+// Each quick button goes to the tab where that log lives, shows the spot, then opens it.
+function quickGo(k) {
+  const t = dateStr();
+  const to = (tab, sel, then) => {
+    if (tab === 'food') ui.foodView = 'log';
+    if (tab === 'plan') ui.planWeek = 0;
+    ui.date = t; go(tab);
+    setTimeout(() => {
+      const el = document.querySelector(sel);
+      if (el) { window.scrollTo({ top: el.getBoundingClientRect().top + scrollY - 90, behavior: 'smooth' }); el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+      if (then) setTimeout(then, 450);
+    }, 30);
+  };
+  ({
+    food: () => to('food', '.card.meal', () => acts.add({})),
+    water: () => to('food', '.card.water', openWater),
+    caf: () => to('food', '.caf-card', () => openCaf()),
+    sleep: () => to('body', '.sleep-card', () => openBody(t)),
+    meds: () => to('body', '.card.meds'),
+    train: () => to('body', '.train-card'),
+    brick: () => to('body', '.brick-card', () => (brickNow() ? acts.brickStop : acts.brickStart)()),
+    hurt: () => to('body', '.inj-card', () => openInjury(null)),
+    gut: () => to('body', '.card.gut', () => openGut({ date: t })),
+    feel: () => to('body', '.card.feel', () => openFeel({ date: t })),
+    journal: () => to('body', '.journal-card', () => openJournal(t)),
+    todo: () => to('plan', '.pday.today', () => openTodo(null, t)),
+  })[k]?.();
 }
 // Today's short look at what's next; the full week lives in Plan.
 function nextUpCard(d) {
@@ -1665,19 +1702,23 @@ const TOUR = [
   ['[data-tab="plan"]', 'Plan', 'Your week like a planner: practices, class, games and everything due.'],
   ['[data-tab="body"]', 'Body', 'Sleep, recovery, training, meds, anything that hurts, and your journal.'],
   ['[data-tab="trends"]', 'Trends', 'Your week and month, what helps you recover, and what might bother your stomach.'],
-  ['.me-btn', 'Me', 'Goals, meds, wake-up times and reminders. You can replay this tour here too.'],
+  ['.me-btn', 'Settings', 'Goals, meds, wake-up times, reminders and linked calendars. You can replay this tour here too.'],
 ];
-function startTour() {
+// A step is [selector, title, text] or [selector, title, text, tab] to show it on another tab.
+function startTour(list = TOUR, onEnd) {
   if (document.querySelector('.tour')) return;
-  if (ui.tab !== 'today' || ui.date !== dateStr()) { ui.date = dateStr(); go('today'); }
-  const steps = TOUR.filter(([sel]) => document.querySelector(sel));
+  ui.date = dateStr(); ui.foodView = 'log'; ui.planWeek = 0;
+  if (ui.tab !== 'today') go('today'); else render();
+  const steps = list.filter(([sel, , , tab]) => tab || document.querySelector(sel));
   let i = 0;
   const el = document.createElement('div');
   el.className = 'tour';
   document.body.appendChild(el);
   const end = () => {
     el.remove(); removeEventListener('resize', place);
-    if (DEMO) { try { localStorage.setItem('pulseTourDemo', '1'); } catch {} } else saveProfile({ toured: true });
+    if (ui.tab !== 'today') go('today');
+    if (onEnd) return onEnd();
+    if (DEMO) { try { localStorage.setItem('pulseTourDemo', '1'); } catch {} } else saveProfile({ toured: true, seenVersion: APP_VERSION });
   };
   function place() {
     const [sel, title, text] = steps[i], t = document.querySelector(sel);
@@ -1689,7 +1730,11 @@ function startTour() {
         <div class="tour-btns">${i === steps.length - 1 ? '<span></span>' : '<button class="tour-skip" data-t="skip">Skip tour</button>'}<button class="btn primary" data-t="next">${i === steps.length - 1 ? 'Done' : 'Next'}</button></div></div>`;
   }
   function show() {
+    const tab = steps[i][3] || 'today';
+    if (ui.tab !== tab) go(tab);
     const t = document.querySelector(steps[i][0]);
+    // Skip a step whose spot isn't on screen today (no game, nothing due…).
+    if (!t) { if (i < steps.length - 1) { i++; return show(); } return end(); }
     if (!t.closest('#nav, #fab')) t.scrollIntoView({ block: 'center' });
     setTimeout(place, 60);
   }
@@ -1703,6 +1748,44 @@ function startTour() {
   if (steps.length) show(); else el.remove();
 }
 const tourDue = () => DEMO ? !localStorage.getItem('pulseTourDemo') : !NEW && !profile()?.toured;
+
+// ---------- update tours ----------
+// Each release that changes how the app works gets an entry here. The first time
+// she opens the new version she gets a short "what's new" card, then a walk-through.
+const UPDATES = {
+  '1.5': {
+    title: 'Pulse got an update',
+    lines: ['📱 New layout: a shorter Today, plus Food, Plan and Body tabs', '📅 A week planner for assignments, with your Teamworks or school calendar', '⚡ Caffeine, water in any amount, injuries, Brick time and journal photos', '⚙️ Settings moved to the gear in the top corner'],
+    steps: [
+      ['.quick', 'Log anything', 'Every kind of log is one tap here. Each button takes you to the right tab.'],
+      ['.nextup, .nextup-empty', 'Up next', "What's left on today's schedule and what's due soon."],
+      ['.me-btn', 'Settings', 'Your goals, meds, reminders and linked calendars are behind this gear now.'],
+      ['[data-tab="food"]', 'Food tab', 'Meals, water, caffeine and meal prep for the day. My foods and Recipes are at the top.', 'food'],
+      ['.caf-card', 'Caffeine', 'Log drinks with their mg. Caffeine close to bedtime shows on your sleep card.', 'food'],
+      ['[data-tab="plan"]', 'Plan tab', 'Your whole week like a planner: class, practice, games and everything due.', 'plan'],
+      ['.pday.today', 'Tap a day', "See everything on it and what's due. Go to day takes you there.", 'plan'],
+      ['[data-tab="body"]', 'Body tab', 'Sleep, training, recovery, meds, anything that hurts, Brick and your journal.', 'body'],
+      ['.inj-card', 'Injuries', 'Log where it hurts and how bad. Trends shows what seems to flare it up.', 'body'],
+      ['.journal-card', 'Journal photos', 'Add photos to your journal. Ask Pulse can see what is in them.', 'body'],
+    ],
+  },
+};
+const seenVersion = () => DEMO ? (() => { try { return localStorage.getItem('pulseSeenVer-' + DEMO_KEY); } catch { return null; } })() : profile()?.seenVersion;
+const markSeen = () => { if (DEMO) { try { localStorage.setItem('pulseSeenVer-' + DEMO_KEY, APP_VERSION); } catch {} } else saveProfile({ seenVersion: APP_VERSION }); };
+const updateDue = () => !NEW && UPDATES[APP_VERSION] && seenVersion() !== APP_VERSION;
+function showUpdate(force = false) {
+  const u = UPDATES[APP_VERSION];
+  if (!u || (!force && !updateDue())) return;
+  const s = openSheet({
+    title: '',
+    body: `<div class="nudge"><div class="nudge-e">✨</div><h3>${u.title}</h3><p class="muted">Here's what's new. Take a quick look around?</p></div>
+      <div class="upd-list">${u.lines.map(l => `<div class="upd-line">${esc(l)}</div>`).join('')}</div>`,
+    footer: `<div class="nudge-btns"><button class="btn primary full" data-x="go">Show me around</button><button class="btn ghost full" data-x="later">Later</button></div>`,
+  });
+  markSeen();
+  s.on('click', '[data-x="go"]', () => { s.close(); setTimeout(() => startTour(u.steps, () => toast("That's everything new ✓")), 250); });
+  s.on('click', '[data-x="later"]', () => { s.close(); toast("Settings → What's new shows this again"); });
+}
 
 // ---------- journal ----------
 function journalCard(day) {
@@ -1764,7 +1847,7 @@ function prepRows(list, act = 'eatPrep') {
   return list.map(p => {
     const age = prepAge(p), m = prepMacros(p);
     return `<div class="prep">
-      <button class="prep-main" data-act="editPrep" data-id="${p.id}">${thumb(p.photo, '🥡')}
+      <button class="prep-main" data-act="editPrep" data-id="${p.id}">${thumb(p.photo, foodEmoji(p.name, '🥡'))}
         <div class="row-main"><div class="row-name">${esc(p.name)}</div>
         <div class="row-sub">${fmt(m.cal)} cal · ${macroLine(m)}</div>
         <div class="prep-meta"><b>${fmt(p.left)} of ${p.containers} left</b> · ${age === 0 ? 'made today' : age === 1 ? 'made yesterday' : `made ${age} days ago`}${age >= 4 ? ` <span class="warn-t">· eat soon</span>` : ''}</div></div></button>
@@ -1803,7 +1886,7 @@ function openPrep({ recipe = null, prep = null }) {
     containers: info.servings || 5, totalG: Math.round(info.weight) || '' };
   const s = openSheet({
     title: prep ? 'Meal prep batch' : 'Meal prep', full: true, lock: true,
-    body: `<div class="amt-food">${thumb(p.photo, '🥡')}<div><div class="amt-name">${esc(p.name)}</div><div class="muted small">${prep ? `Made ${fmtDay(p.madeOn)}` : 'Split a batch into containers'}</div></div></div>
+    body: `<div class="amt-food">${thumb(p.photo, foodEmoji(p.name, '🥡'))}<div><div class="amt-name">${esc(p.name)}</div><div class="muted small">${prep ? `Made ${fmtDay(p.madeOn)}` : 'Split a batch into containers'}</div></div></div>
       <div class="grid2 mt">
         <div class="field"><label>Containers</label><input id="pc" inputmode="numeric" value="${p.containers}"></div>
         <div class="field"><label>Total weight</label><div class="unit-in"><input id="pt" inputmode="decimal" value="${fmtIn(p.totalG)}" placeholder="whole batch"><span>g</span></div></div>
@@ -1959,7 +2042,7 @@ function foodListHTML() {
     <p>Photograph the nutrition label or scan the barcode once. After that, enter the grams you weighed and the macros are calculated for you.</p>
     <button class="btn primary" data-act="newFood">＋ Add your first food</button></div>`;
   if (!list.length) return `<p class="muted center">No foods match “${esc(ui.foodQ)}”.</p>`;
-  return list.map(f => `<button class="row" data-act="food" data-id="${f.id}">${thumb(f.photo, '🥣')}
+  return list.map(f => `<button class="row" data-act="food" data-id="${f.id}">${thumb(f.photo, foodEmoji(f.name, '🥣'))}
     <div class="row-main"><div class="row-name">${esc(f.name)}${f.fav ? ' <span class="star">★</span>' : ''}${gfBadge('food', f)}</div><div class="row-sub">${foodSub(f)}</div></div><span class="chev">›</span></button>`).join('');
 }
 function screenFoods() {
@@ -1986,7 +2069,7 @@ function recipeListHTML() {
   return list.map(r => {
     const info = recipeInfo(r, getFood);
     const per = info.servings ? scale(info.total, 1 / info.servings) : scale(info.per, 100);
-    return `<button class="row" data-act="recipe" data-id="${r.id}">${thumb(r.photo, '🍲')}
+    return `<button class="row" data-act="recipe" data-id="${r.id}">${thumb(r.photo, foodEmoji(r.name, '🍲'))}
       <div class="row-main"><div class="row-name">${esc(r.name)}${gfBadge(r.ingredients ? 'recipe' : 'food', r)}</div>
       <div class="row-sub">${fmt(per.cal)} cal ${info.servings ? '/ serving' : '/ 100 g'} · ${macroLine(per)}</div></div><span class="chev">›</span></button>`;
   }).join('') || `<p class="muted center">No recipes match.</p>`;
@@ -2270,7 +2353,7 @@ function screenMe() {
   const cloud = sync.enabled && sync.currentUser();
   const gi = (k, label, unit) => `<div class="field"><label>${label}</label><div class="unit-in"><input inputmode="decimal" value="${g[k]}" data-change="goal" data-k="${k}"><span>${unit}</span></div></div>`;
   const statusTxt = { idle: 'Ready', syncing: 'Syncing…', ok: 'All backed up ✓', error: 'Sync problem — will retry', offline: 'Offline — will sync later' }[sync.status];
-  return `${header('Me')}
+  return `${header('Settings', 'Goals, meds, reminders and more')}
   <div class="pad">
     <section class="card profile">
       <div class="avatar">${esc(firstName()[0]?.toUpperCase() || '?')}</div>
@@ -2278,7 +2361,7 @@ function screenMe() {
       <div class="muted small">${cloud ? esc(cloud.email) : '🔒 Private. Stays on this phone.'}</div></div>
     </section>
     <div class="btn-col"><button class="btn soft" data-act="calLinks">🔗 Linked calendars${calLinks().length ? ` (${calLinks().length})` : ''}</button><button class="btn soft" data-act="games">🏀 Games schedule</button></div>
-    <button class="btn soft full mt" data-act="tour">🧭 Show me around</button>
+    <div class="btn-col mt"><button class="btn soft" data-act="updateTour">✨ What's new</button><button class="btn soft" data-act="tour">🧭 Show me around</button></div>
     ${DEMO ? '<button class="btn soft full mt" data-act="winPreview">🏆 Preview the win screen</button>' : ''}
 
     <section class="card">
@@ -2342,14 +2425,16 @@ const acts = {
   planDay: d => openDay(d.d),
   foodView: d => { ui.foodView = d.v; render(); },
   cafLog: () => openCaf(),
+  qgo: d => quickGo(d.k),
+  updateTour: () => showUpdate(true),
   ppHide: d => { try { localStorage.setItem('pulsePPHidden', JSON.stringify([...ppHidden(), d.k])); } catch {} render(); },
   eventEdit: d => openEvent(d.id || null),
   todoEdit: d => openTodo(d.id || null),
   todoDone: (d, el) => toggleTodo(d.id, el),
   games: () => openGames(),
   calLinks: () => openCalLinks(),
-  brickStart: () => { if (!brickNow()) { db.put('brick', { id: uid(), start: Date.now(), end: null }); buzz(); toast('🧱 Bricked. Timer started'); } },
-  brickStop: () => { const b = brickNow(); if (b) { db.put('brick', { ...b, end: Date.now() }); toast(`🧱 ${dur(brickMin(b))} bricked`); } },
+  brickStart: () => { if (!brickNow()) { db.put('brick', { id: uid(), start: Date.now(), end: null }); buzz(); toast('Bricked. Timer started'); } },
+  brickStop: () => { const b = brickNow(); if (b) { db.put('brick', { ...b, end: Date.now() }); toast(`Unbricked · ${dur(brickMin(b))} bricked`); } },
   brickLog: () => openBrickLog(),
   injuryLog: d => openInjury(d.id || null),
   nudge: d => showNudge(d.k),
@@ -2553,9 +2638,9 @@ function openPicker({ meal, date, mode = 'log', onPick }) {
     }
     const preps = mode === 'log' && !q && tab === 'recent' ? activePreps() : [];
     s.$('#plist').innerHTML = (preps.length ? `<h4 class="sec">🥡 From your meal prep</h4>${preps.map(p => `<button class="row" data-x="prep" data-id="${p.id}">
-        ${thumb(p.photo, '🥡')}<div class="row-main"><div class="row-name">${esc(p.name)}</div><div class="row-sub">1 container · ${fmt(prepMacros(p).cal)} cal · ${fmt(p.left)} left</div></div><span class="row-plus">＋</span></button>`).join('')}<h4 class="sec">Recent</h4>` : '')
+        ${thumb(p.photo, foodEmoji(p.name, '🥡'))}<div class="row-main"><div class="row-name">${esc(p.name)}</div><div class="row-sub">1 container · ${fmt(prepMacros(p).cal)} cal · ${fmt(p.left)} left</div></div><span class="row-plus">＋</span></button>`).join('')}<h4 class="sec">Recent</h4>` : '')
       + (rows.length ? rows.map(([k, o, sub]) => `<button class="row" data-x="pick" data-k="${k}" data-id="${o.id}">
-        ${thumb(o.photo, k === 'recipe' ? '🍲' : '🥣')}<div class="row-main"><div class="row-name">${esc(o.name)}${o.fav ? ' <span class="star">★</span>' : ''}${gfBadge(k, o)}</div><div class="row-sub">${sub}</div></div><span class="row-plus">＋</span></button>`).join('')
+        ${thumb(o.photo, foodEmoji(o.name, k === 'recipe' ? '🍲' : '🥣'))}<div class="row-main"><div class="row-name">${esc(o.name)}${o.fav ? ' <span class="star">★</span>' : ''}${gfBadge(k, o)}</div><div class="row-sub">${sub}</div></div><span class="row-plus">＋</span></button>`).join('')
       : `<div class="empty small"><p>${q ? `Nothing saved called “${esc(q)}”.` : tab === 'recipes' ? 'No recipes yet.' : 'No saved foods yet.'}</p>
          <button class="btn primary" data-x="new">📷 Add it from the label</button>${q ? `<button class="btn soft" data-x="online">🔎 Search online for “${esc(q)}”</button>` : ''}</div>`);
   }
@@ -2610,7 +2695,7 @@ function openAmount({ item, entry = null, prep = null, meal, date, onAdded }) {
   const sus = entry ? null : gutSuspects().get(item.kind + ':' + item.id);
   const s = openSheet({
     title: entry ? 'Edit entry' : prep ? 'How much?' : 'How many grams?',
-    body: `<div class="amt-food">${thumb(item.photo, item.kind === 'recipe' ? '🍲' : '🥣')}<div><div class="amt-name">${esc(item.name)}</div><div class="muted small">${esc(item.brand || '')}</div></div></div>
+    body: `<div class="amt-food">${thumb(item.photo, foodEmoji(item.name, item.kind === 'recipe' ? '🍲' : '🥣'))}<div><div class="amt-name">${esc(item.name)}</div><div class="muted small">${esc(item.brand || '')}</div></div></div>
       ${gfWarning(item.kind, item.kind === 'food' ? getFood(item.id) : db.get('recipes', item.id))}
       ${sus ? `<p class="tip">⚠️ Heads up: stomach trouble followed this ${sus.hit} of the ${sus.eaten} times you had it.</p>` : ''}
       <div class="amt-input"><input id="amt" type="text" inputmode="decimal" value="${startG === '' ? '' : fmtIn(unit === 'pc' ? entry.pcs : startG)}" placeholder="0" autocomplete="off" aria-label="Amount">
@@ -3660,7 +3745,7 @@ function startApp({ first = false } = {}) {
     if (ui.tab === 'me') queueRender();
     let due = false;
     try { due = tourDue(); } catch {}
-    if (!quiet && !first && !due) setTimeout(maybeNudge, 2600);
+    if (!quiet && !first && !due) setTimeout(() => updateDue() ? showUpdate() : maybeNudge(), 2600);
   });
   refreshResults();
   syncCals();
@@ -3910,7 +3995,7 @@ function brickRow(d) {
   if (d !== dateStr()) return '';
   const on = brickNow(), today = brickOn(d);
   return `<section class="card brick-card"><div class="brick-row">
-    <span class="brick-ico">🧱</span>
+    <span class="brick-ico">${BRICK}</span>
     <div class="grow">${on ? `<b>Bricked now</b><div class="muted small">${dur(brickMin(on))} so far${today > brickMin(on) + 1 ? ` · ${dur(today)} today` : ''}</div>`
       : `<b>Phone brick</b><div class="muted small">${today >= 1 ? `${dur(today)} today` : 'Not today yet'}</div>`}</div>
     ${on ? `<button class="btn primary" data-act="brickStop">Unbrick</button>` : `<button class="btn soft" data-act="brickLog">Log time</button><button class="btn primary" data-act="brickStart">Start</button>`}
@@ -3918,7 +4003,7 @@ function brickRow(d) {
 }
 function openBrickLog() {
   const s = openSheet({
-    title: '🧱 Log Brick time',
+    title: 'Log Brick time',
     body: `<div class="chips">${[30, 60, 90, 120, 180, 240].map(m => `<button class="chip" data-x="m" data-m="${m}">${dur(m)}</button>`).join('')}</div>
       <div class="grid2 mt"><div class="field"><label>Hours</label><input id="bh" inputmode="decimal" placeholder="0"></div><div class="field"><label>Ended at</label><input type="time" id="be" value="${timeStr()}"></div></div>
       <button class="link muted small" data-x="setup">Log it on its own with a Shortcut</button>`,
@@ -3931,7 +4016,7 @@ function openBrickLog() {
     if (!(mins > 0)) return toast('Pick how long');
     const end = new Date(dateStr() + 'T' + (s.$('#be').value || timeStr())).getTime();
     db.put('brick', { id: uid(), start: end - mins * 60e3, end });
-    s.close(); toast(`🧱 ${dur(mins)} logged`);
+    s.close(); toast(`${dur(mins)} of Brick logged`);
   });
 }
 // Optional: an iPhone Shortcut posts start/stop to the push server, and the
@@ -3940,7 +4025,7 @@ function openBrickSetup() {
   if (!profile()?.brickKey) saveProfile({ brickKey: Array.from(crypto.getRandomValues(new Uint8Array(12)), b => b.toString(36).padStart(2, '0')).join('').slice(0, 24) });
   const key = profile().brickKey, base = CONFIG_PUSH() + '/brick?key=' + key + '&action=';
   const s = openSheet({
-    title: '🧱 Brick on its own', full: true,
+    title: 'Brick on its own', full: true,
     body: `<p class="small">Brick doesn't share its data, but an iPhone Shortcut can tell Pulse when you brick and unbrick. Optional, and you can still log by hand.</p>
       <ol class="hs small"><li>Open <b>Shortcuts</b> → <b>＋</b> → add <b>Get Contents of URL</b>.</li>
         <li>Paste the <b>Start</b> link below, tap ▸ next to it, and set Method to <b>POST</b>. Name it "Brick start".</li>
@@ -3973,7 +4058,7 @@ function brickTrends(dates) {
   const sl = dates.map(d => ({ m: brickOn(d), s: db.get('days', addDays(d, 1))?.sleepMin })).filter(x => x.s != null);
   const avgOf = l => l.length ? l.reduce((a, x) => a + x.s, 0) / l.length : null;
   const yes = avgOf(sl.filter(x => x.m >= 120)), no = avgOf(sl.filter(x => x.m < 120));
-  return `<section class="card"><div class="card-head"><h3>🧱 Phone brick</h3><span class="muted small">${dur(mins.reduce((a, b) => a + b, 0))} total</span></div>
+  return `<section class="card"><div class="card-head"><h3>${BRICK} Phone brick</h3><span class="muted small">${dur(mins.reduce((a, b) => a + b, 0))} total</span></div>
     ${barChart({ values: mins.map(m => Math.round(m / 6) / 10), labels: dates.map(d => { const x = parseDate(d); return `${x.getMonth() + 1}/${x.getDate()}`; }), dates, color: 'var(--c)', fmtY: x => x + 'h' })}
     <div class="big-stats"><div><b>${on.length}</b><span>days bricked</span></div><div><b>${on.length ? dur(on.reduce((a, b) => a + b, 0) / on.length) : '–'}</b><span>avg on those days</span></div><div><b>${dur(Math.max(0, ...db.list('brick').map(b => brickMin(b))))}</b><span>longest</span></div></div>
     ${yes != null && no != null && sl.filter(x => x.m >= 120).length >= 3 && sl.filter(x => x.m < 120).length >= 3 ? `<p class="small">After days with 2h+ bricked you slept <b>${dur(yes)}</b>, vs <b>${dur(no)}</b> other nights.</p>` : ''}
@@ -4088,6 +4173,8 @@ const WHATS_NEW = [
   ['caf', 'Caffeine', 'mg box on foods and quick add, daily total, late heads-up'],
   ['cafLog', 'Caffeine log', 'One-tap re-log, plus a list in Food'],
   ['checks', 'Check-offs', 'To-dos burst when checked; rings and calories get a ✓'],
+  ['update', 'Update tour', 'What she sees the first time she opens this version'],
+  ['quick', 'Quick log buttons', 'Every log on Today; each jumps to its tab'],
   ['layout', 'New layout', 'Short Today; Food, Plan, Body tabs; Me is her initial'],
   ['sched', 'Plan: week planner', 'Whole week like a planner; tap a day for details'],
   ['month', 'Month calendar', "Tap a day: what's due, then Go to day"],
@@ -4107,6 +4194,8 @@ function devShow(k) {
     allOn: () => scrollTo2('me', '.all-row'),
     water: () => { ui.date = dateStr(); ui.foodView = 'log'; scrollTo2('food', '.card.water'); setTimeout(openWater, 700); },
     layout: () => { ui.date = dateStr(); go('today'); },
+    update: () => showUpdate(true),
+    quick: () => scrollTo2('today', '.quick'),
     month: () => openCalendar(),
     cafLog: () => { ui.date = dateStr(); ui.foodView = 'log'; scrollTo2('food', '.caf-card'); setTimeout(openCaf, 700); },
     checks: () => { ui.planWeek = 0; scrollTo2('plan', '.pday.today'); },
@@ -4126,7 +4215,7 @@ const NUDGES = {
   notify: { e: '🔔', t: 'Turn on notifications', b: "Pulse works best with them on: bedtime, meds, game days and wins. Never more than a few a day, and nothing after bedtime.", go: 'Turn on', act: () => turnOnNotify() },
   health: { e: '⌚', t: 'Try connecting Apple Health', b: 'Sleep, recovery and calories burned fill in from your Whoop on their own. Takes about 2 minutes to set up.', go: 'Set it up', act: () => healthSync() },
   cal: { e: '📅', t: 'Try linking your schedule', b: 'Paste your Teamworks or Google calendar link once and practices, lifts and travel show up here. Takes a minute.', go: 'Link it', act: () => openCalLinks() },
-  brick: { e: '🧱', t: 'Log Brick time on its own', b: 'An iPhone Shortcut can log every time you brick and unbrick, so you never have to tap. Optional.', go: 'Show me', act: () => openBrickSetup() },
+  brick: { e: BRICK, t: 'Log Brick time on its own', b: 'An iPhone Shortcut can log every time you brick and unbrick, so you never have to tap. Optional.', go: 'Show me', act: () => openBrickSetup() },
 };
 const nudgeState = () => { try { return JSON.parse(localStorage.getItem('pulseNudge-' + (DEMO ? DEMO_KEY : 'me')) || '{}'); } catch { return {}; } };
 const saveNudge = st => { try { localStorage.setItem('pulseNudge-' + (DEMO ? DEMO_KEY : 'me'), JSON.stringify(st)); } catch {} };
@@ -4211,7 +4300,7 @@ function splash(first) {
   setTimeout(done, first ? 2400 : 1700);
   let due = false;
   try { due = first || tourDue(); } catch {}
-  if (due) setTimeout(startTour, (first ? 2400 : 1700) + 500);
+  if (due) { markSeen(); setTimeout(() => startTour(), (first ? 2400 : 1700) + 500); }
 }
 
 // ---------- pull to refresh ----------
